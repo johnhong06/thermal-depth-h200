@@ -3,12 +3,15 @@
 #   bash run.sh check                     # 1–2 분: 파이썬 · torch · GPU · CPU · RAM · 경로 여유 · 쓰기 가능 · 올려 둔 묶음 · 외부 접속. 설치 안 함
 #   bash run.sh smoke                     # 끝까지 아주 작게: 작은 묶음 (학습 48 장 · 평가 세트마다 8–16 장) · 1 epoch · 시드 0, 모든 단계
 #   bash run.sh all [ARMS=…] [SEEDS=…]    # 준비 → 데이터 → (시드마다 팔마다) 학습 · 평가 → 표 → results.zip (실행 하나가 끝날 때마다 표와 묶음을 다시 만듦)
+#   bash run.sh eval FROM=<앞선 작업 이름>  # 학습 없이 평가만: 앞선 작업이 CKPT=keep 으로 남긴 모델 (/app/output/<작업>/ckpt/*.pt) 을 지금의 평가 세트로 다시 잰다
+#                                         #   — 평가 데이터를 나중에 더했을 때 쓴다. SETS=<세트,…> 로 일부만
 #   bash run.sh setup [DRY_RUN=1] | data  # 한 단계만 (작업끼리 파일이 안 이어지므로 data 는 setup 도 먼저 한다)
 # KEY=값 (이슈 한 줄 명령에는 환경 변수를 못 넣으므로 인자로):
 #   ARMS=base,tone,pl,plv   돌릴 팔 (쉼표). base = 기준선 · tone = 무작위 톤매핑 증강 · pl = 다른 데이터의 쌍에 의사 라벨 (KAIST · LLVIP) ·
 #                           plv = 같은 방식을 ViViD 낮 쌍으로 (대상 데이터에 적응하는 기존 설정의 비교 팔). README '실험'. 안 주면 넷 다
 #   SEEDS=0,1,2   EPOCHS=10   BS=16   PAIR_BS=8 (pl · plv 의 쌍 배치)   AMP=1 (bf16 혼합 정밀도, 0 = 끔)   LIMIT=0 (학습 장 수 제한)   WORKERS=8 (사진을 읽는 작업자 수)
-#   CKPT=none|seed0|all (results.zip 에 넣을 final.pt — 하나에 1.3 GB 라 기본은 안 넣음)
+#   CKPT=none|keep|seed0|all   학습한 모델 (final.pt, 하나에 1.3 GB). none = 버림 (기본) · keep = 결과 폴더의 ckpt/ 에 남김 (results.zip 에는 안 넣음 — 나중에 eval 모드로 씀) ·
+#                              seed0 · all = results.zip 에 넣음
 #   STALL_MIN=40 (로그가 이만큼 그대로면 멈춘 것으로 보고 끔)   PROGRESS_SEC=1800   RETRY=2 (학습이 죽으면 last.pt 에서 다시)
 #   LINKS=<Drive 파일 ID> 데이터 묶음을 받을 곳의 목록 파일. 묶음과 받는 주소는 저장소에 없다 (다시 배포하면 안 되는 데이터) — 이 값은 실행 명령에만 적는다.
 #         /app/data 에 묶음이 올라가 있으면 없어도 된다.
@@ -24,9 +27,9 @@ cd "$(dirname "$0")" || exit 1
 REPO=$PWD
 MODE=${1:-}
 [ $# -gt 0 ] && shift
-MODES="check setup data smoke all"
+MODES="check setup data smoke all eval"
 [[ " $MODES " == *" $MODE "* ]] && [ -n "$MODE" ] || { echo "!!! 모드: ${MODES// / | } (받은 값: '$MODE'). 사용법은 run.sh 맨 위"; exit 2; }
-KEYS="ARMS SEEDS EPOCHS BS PAIR_BS AMP LIMIT WORKERS ENC LINKS CKPT STALL_MIN PROGRESS_SEC RETRY JOB DRY_RUN WORK PY APP_ROOT DATA_DIR HF_DIR"
+KEYS="ARMS SEEDS EPOCHS BS PAIR_BS AMP LIMIT WORKERS ENC LINKS FROM SETS KIND CKPT STALL_MIN PROGRESS_SEC RETRY JOB DRY_RUN WORK PY APP_ROOT DATA_DIR HF_DIR"
 for k in $KEYS; do unset "$k"; done            # 컨테이너 환경 변수와 섞이지 않게 — 값은 KEY=값 인자로만
 for a in "$@"; do
   k=${a%%=*}
@@ -39,11 +42,14 @@ chk ARMS "$LIST"; chk SEEDS "$LIST"; chk EPOCHS "$INT"; chk BS "$INT"; chk PAIR_
 [ -z "${LINKS:-}" ] || [[ $LINKS =~ ^[A-Za-z0-9_-]{20,80}$ ]] || { echo "!!! LINKS — Drive 파일 ID 꼴이 아님"; exit 2; }
 case ${AMP:-1} in 0|1) ;; *) echo "!!! AMP = 0 | 1"; exit 2;; esac
 case ${ENC:-vitl} in vitl|vits) ;; *) echo "!!! ENC = vitl | vits"; exit 2;; esac
-case ${CKPT:-none} in none|seed0|all) ;; *) echo "!!! CKPT = none | seed0 | all"; exit 2;; esac
+case ${CKPT:-none} in none|keep|seed0|all) ;; *) echo "!!! CKPT = none | keep | seed0 | all"; exit 2;; esac
+chk FROM "$NAME"; [ -z "${SETS:-}" ] || [[ $SETS =~ ^[a-z_,]+$ ]] || { echo "!!! SETS — 세트 이름을 쉼표로"; exit 2; }
+case ${KIND:-} in ""|smoke|all) ;; *) echo "!!! KIND = smoke | all"; exit 2;; esac
+[ "$MODE" != eval ] || [ -n "${FROM:-}" ] || { echo "!!! eval 모드에는 FROM=<앞선 작업 이름> 이 필요"; exit 2; }
 case ${DRY_RUN:-0} in 0) ;; 1) [ "$MODE" = setup ] || { echo "!!! DRY_RUN=1 은 setup 모드에만"; exit 2; };; *) echo "!!! DRY_RUN = 0 | 1"; exit 2;; esac
 _a=${ARMS:-}; for x in ${_a//,/ }; do case $x in base|tone|pl|plv) ;; *) echo "!!! ARMS 의 '$x' — base | tone | pl | plv"; exit 2;; esac; done
-KIND=all
-if [ "$MODE" = smoke ]; then KIND=smoke; SEEDS=${SEEDS:-0}; EPOCHS=${EPOCHS:-1}; fi
+if [ "$MODE" = smoke ]; then KIND=${KIND:-smoke}; SEEDS=${SEEDS:-0}; EPOCHS=${EPOCHS:-1}; fi
+KIND=${KIND:-all}; FROM=${FROM:-}; SETS=${SETS:-}
 ARMS=${ARMS:-base,tone,pl,plv}; SEEDS=${SEEDS:-0,1,2}; EPOCHS=${EPOCHS:-10}; BS=${BS:-16}; PAIR_BS=${PAIR_BS:-8}; AMP=${AMP:-1}; LIMIT=${LIMIT:-0}; WORKERS=${WORKERS:-8}; ENC=${ENC:-vitl}
 CKPT=${CKPT:-none}; STALL_MIN=${STALL_MIN:-40}; PROGRESS_SEC=${PROGRESS_SEC:-1800}; RETRY=${RETRY:-2}; DRY_RUN=${DRY_RUN:-0}
 PY=${PY:-}; DATA_DIR=${DATA_DIR:-}; LINKS=${LINKS:-}
@@ -95,7 +101,7 @@ for v in WORK HF_HOME UV_CACHE_DIR TD_CODE TD_DATA CK; do
   under "${!v}" "$OUTROOT" && { echo "!!! $v 가 결과 전용 경로 ($OUTROOT) 아래 — 캐시 · 데이터 · 체크포인트는 작업 폴더에. 중단"; exit 2; }
 done
 echo "[run] $(date '+%F %T') 모드 $MODE · $([ $H200 = 1 ] && echo "H200 ($APP)" || echo 로컬) · 커밋 $(git rev-parse --short HEAD 2>/dev/null || echo '?')" \
-     "· 작업 폴더 여유 $(df -h "$WORK" 2>/dev/null | awk 'NR==2 {print $4}') · 결과 $OUTJ"
+     "· 작업 폴더 여유 $(df -h "$WORK" 2>/dev/null | awk 'NR==2 {print $4}') · 결과 $OUTJ · 결과 경로에 보이는 다른 작업 폴더 $(( $(find "$OUTROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) - 1 )) 개"
 [ "$MODE" = check ] || echo "[run] ARMS=$ARMS · SEEDS=$SEEDS · EPOCHS=$EPOCHS · BS=$BS · PAIR_BS=$PAIR_BS · AMP=$AMP · LIMIT=$LIMIT · WORKERS=$WORKERS · CKPT=$CKPT$([ "$ENC" = vitl ] || echo " · ENC=$ENC (무작위 초기화 — 흐름 시험)")"
 
 # ───────────────────────── 단계 실행기: 멈춤 감지 ─────────────────────────
@@ -253,11 +259,15 @@ train_eval() {  # 팔 시드 — 끝난 것은 건너뜀 (같은 작업 안)
   if [ ! -f "$rd/eval/metrics.json" ]; then
     run_step "평가 $name" "$LOGS/eval_$name.log" show "$TPY" -I -B -u src/evaluate.py --ckpt "$ck/final.pt" --out "$rd/eval" --amp "$AMP" --bs "$BS" --workers "$WORKERS" --encoder "$ENC" || return 1
   fi
+  if [ "$CKPT" = keep ]; then                                     # 결과 폴더에 남긴다 (results.zip 에는 안 넣음) — 나중에 eval 모드가 읽는다
+    mkdir -p "$OUTJ/ckpt" && mv "$ck/final.pt" "$OUTJ/ckpt/$name.pt" && echo "[ckpt] $name.pt 남김 ($(du -h "$OUTJ/ckpt/$name.pt" | cut -f1))"
+    return 0
+  fi
   [ "$CKPT" = all ] || { [ "$CKPT" = seed0 ] && [ "$seed" = "$SEED0" ]; } || rm -f "$ck/final.pt"   # 안 묶을 체크포인트는 평가 뒤에 지운다 (작업 폴더 공간)
 }
 zip_results() {  # /app/output/<작업>/results.zip — logs · runs (기록 · 지표 · 사진별 표 · 예측 표본) · summary · meta + CKPT 에 따른 final.pt
   local cks=() d
-  if [ "$CKPT" != none ] && [ -d "$CK" ]; then
+  if [ "$CKPT" != none ] && [ "$CKPT" != keep ] && [ -d "$CK" ]; then
     for d in "$CK"/*/; do [ -f "$d/final.pt" ] && cks+=("$d/final.pt"); done
   fi
   "$SYSPY" -I -B - "$OUTJ/results.zip" "$OUTJ" "${cks[@]}" <<'PY'
@@ -267,7 +277,7 @@ items = []
 for d, _, fs in os.walk(root):
     for f in fs:
         p = os.path.join(d, f)
-        if not p.startswith(dst):
+        if not p.startswith(dst) and not os.path.relpath(p, root).startswith("ckpt" + os.sep):   # 남겨 둔 모델 (CKPT=keep) 은 묶지 않는다
             items.append((p, os.path.relpath(p, root)))
 items += [(c, os.path.join("ckpt", os.path.basename(os.path.dirname(c)) + ".pt")) for c in cks]
 with zipfile.ZipFile(dst + ".tmp", "w", allowZip64=True) as z:
@@ -287,10 +297,23 @@ case "$MODE" in
   smoke|all)
     setup_all || fail "준비 실패"
     data_step || fail "데이터 실패"
-    for s in ${SEEDS//,/ }; do                                    # 시드 먼저 — 중간에 끊겨도 두 팔을 같은 시드로 견줄 수 있게
+    for s in ${SEEDS//,/ }; do                                    # 시드 먼저 — 중간에 끊겨도 팔들을 같은 시드로 견줄 수 있게
       for arm in ${ARMS//,/ }; do
         train_eval "$arm" "$s" || fail "$arm 시드 $s 실패"
         report; zip_results
       done
     done;;
+  eval)
+    src=$OUTROOT/$FROM/ckpt
+    ls "$src"/*.pt >/dev/null 2>&1 || fail "앞선 작업의 모델이 안 보임: 결과 경로의 $FROM/ckpt (그 작업을 CKPT=keep 으로 돌렸는지, 결과 경로가 작업 사이에 남는지 확인)"
+    setup_all || fail "준비 실패"
+    data_step || fail "데이터 실패"
+    for f in "$src"/*.pt; do
+      name=$(basename "$f" .pt)
+      [[ $name =~ ^[a-z]+_s[0-9]+$ ]] || continue
+      mkdir -p "$RUNS/$name"
+      run_step "평가 $name" "$LOGS/eval_$name.log" show "$TPY" -I -B -u src/evaluate.py --ckpt "$f" --out "$RUNS/$name/eval" --amp "$AMP" --bs "$BS" --workers "$WORKERS" \
+        --encoder "$ENC" ${SETS:+--sets "$SETS"} || fail "$name 평가 실패"
+    done
+    report; zip_results;;
 esac

@@ -17,4 +17,7 @@ mkdir -p "$W"
 bash setup/fetch_code.sh "$W/code/Depth-Anything-V2"
 TD_CODE=$W/code/Depth-Anything-V2 "${CAP[@]}" "$PY" -I -B -W ignore::ResourceWarning tests/test_parts.py
 rm -rf "$W/output/smoke_local"
-"${CAP[@]}" bash run.sh smoke WORK="$W" PY="$PY" DATA_DIR="$SMOKE_DIR" HF_DIR="$HF_DIR" BS=2 PAIR_BS=1 WORKERS=0 ENC=vits JOB=smoke_local
+"${CAP[@]}" bash run.sh smoke WORK="$W" PY="$PY" DATA_DIR="$SMOKE_DIR" HF_DIR="$HF_DIR" BS=2 PAIR_BS=1 WORKERS=0 ENC=vits CKPT=keep JOB=smoke_local
+# 남긴 모델로 평가만 다시 (eval 모드) — 일부 세트만
+rm -rf "$W/output/eval_local"
+"${CAP[@]}" bash run.sh eval FROM=smoke_local SETS=vivid,fire KIND=smoke WORK="$W" PY="$PY" DATA_DIR="$SMOKE_DIR" HF_DIR="$HF_DIR" BS=2 WORKERS=0 ENC=vits JOB=eval_local

@@ -207,8 +207,9 @@ H200 요청 이슈의 실행 명령은 한 줄이다.
 bash run.sh check LINKS=<값>                 # 1–2분. 환경 · 공간 · 외부 접속 · 묶음마다 받을 수 있는지. 설치 없음 (GPU 할당 1)
 bash run.sh smoke LINKS=<값>                 # 작은 묶음으로 모든 단계를 끝까지. 스텝당 시간이 찍힌다 (GPU 할당 7)
 bash run.sh all ARMS=base,tone LINKS=<값>    # 본 실험 1: 기준선 · 톤매핑 증강 × 시드 0 · 1 · 2 (GPU 할당 7)
-bash run.sh all ARMS=pl,plv LINKS=<값>       # 본 실험 2: 의사 라벨 팔 둘 × 시드 0 · 1 · 2
-bash run.sh all ARMS=base SEEDS=0 LINKS=<값> # 일부만
+bash run.sh all ARMS=base,pl,plv CKPT=keep LINKS=<값>   # 본 실험 2: 기준선 · 의사 라벨 팔 둘 × 시드 0 · 1 · 2, 학습한 모델을 서버에 남김
+bash run.sh eval FROM=<작업 이름> LINKS=<값>             # 학습 없이 평가만: 남겨 둔 모델을 지금의 평가 세트로 다시 잰다
+bash run.sh all ARMS=base SEEDS=0 LINKS=<값>             # 일부만
 ```
 
 인자는 `KEY=값`으로 준다. `LINKS`는 묶음을 받을 곳의 목록을 가리키는 값으로, 저장소에 적지 않고 실행 명령에만 적는다. 화면에는 찍히지 않는다. `/app/data`에 묶음이 올라가 있으면 빼도 된다. `ARMS` · `SEEDS` · `EPOCHS` · `BS` · `AMP` · `CKPT` 등의 뜻은 `run.sh` 맨 위에 있다.
@@ -226,6 +227,8 @@ bash run.sh all ARMS=base SEEDS=0 LINKS=<값> # 일부만
 [판정] zero-shot 격차 (FIReStereo): … → 격차 있음
 [판정] tone − base (FIReStereo): … → 개선
 ```
+
+`CKPT=keep`을 주면 학습한 모델(하나에 1.3 GB)을 결과 폴더의 `ckpt/`에 남긴다. 결과 묶음에는 넣지 않는다. 평가 데이터를 나중에 더했을 때 `eval` 모드가 이 모델들을 읽어 다시 학습하지 않고 평가만 한다. `FROM`에는 모델을 남긴 작업의 이름(그 작업 화면의 마지막 줄 `결과 /app/output/<이름>`)을 적는다.
 
 결과 파일은 `/app/output/<작업>/results.zip` 하나다. 기록, 지표, 사진별 표(`per_image.csv`), 예측 표본(세트마다 16장), 요약 표가 들어 있고 수십 MB다. 체크포인트는 하나에 1.3 GB라 기본으로는 넣지 않는다(`CKPT=seed0`으로 넣을 수 있다).
 
