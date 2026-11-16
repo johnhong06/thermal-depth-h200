@@ -1,0 +1,65 @@
+{
+ "_note": "실험용 묶음 (tar, 압축 없음). MS2 = 열화상 왼쪽 + 열화상 시점 깊이 (공식 로더의 솎기 규칙: train · val 3 장마다 1 장, test 10 장마다 1 장), FIReStereo = 저자 test 폴더의 왼쪽 열화상 + 깊이. smoke = 위에서 몇 장씩. 2026-11-16 로컬에서 만들어 크기 · sha256 · 개수를 확인한 값. 묶음은 이 저장소에 없고 받는 주소도 적지 않는다 (다시 배포하면 안 되는 데이터) — 관리자가 /app/data 에 올려 둔 사본을 크기와 sha256 으로 찾아 쓴다. setup/get_data.py · setup/check.py · src/data.py 가 읽는다.",
+ "files": {
+  "smoke.tar": {
+   "kind": "smoke",
+   "size": 28487680,
+   "sha256": "387dafa5fecb31130949bf6b9bdfd78fe7ec4f4261eba73267b0711a913e42c3",
+   "png": 208
+  },
+  "train.tar": {
+   "kind": "all",
+   "size": 5741977600,
+   "sha256": "4f81d06e1b3ca4a6b48683db9e240b3648e98aa237a47819e9f44e92f5432ed9",
+   "png": 51032
+  },
+  "val.tar": {
+   "kind": "all",
+   "size": 1110333440,
+   "sha256": "2769b33f55092cdf69caef739a1564050411dd1e83988df5db11aa9c99b9b84a",
+   "png": 9500
+  },
+  "test_day.tar": {
+   "kind": "all",
+   "size": 543303680,
+   "sha256": "13e53a6bd874485539d341348cd418aa0c2175ee48fb6797326f8292de04ac03",
+   "png": 4664
+  },
+  "test_night.tar": {
+   "kind": "all",
+   "size": 517969920,
+   "sha256": "894687fbf10ba36323c7a64347c65538e4c8eef7bdf132d858334c0070aa23d4",
+   "png": 4584
+  },
+  "test_rainy.tar": {
+   "kind": "all",
+   "size": 518563840,
+   "sha256": "615cb2c7624ffa966449fb0baa294af373afbdf8a65e119e3ee5585ed7d41c72",
+   "png": 5006
+  },
+  "firestereo_test.tar": {
+   "kind": "all",
+   "size": 2717808640,
+   "sha256": "69c571add7aaf2934263b67ea29b585c92b59b745e0bd71e512802dcf31b5855",
+   "png": 10042
+  }
+ },
+ "counts": {
+  "all": {
+   "train": 25516,
+   "val": 4750,
+   "test_day": 2332,
+   "test_night": 2292,
+   "test_rainy": 2503,
+   "fire": 5021
+  },
+  "smoke": {
+   "train": 48,
+   "val": 16,
+   "test_day": 8,
+   "test_night": 8,
+   "test_rainy": 8,
+   "fire": 16
+  }
+ }
+}

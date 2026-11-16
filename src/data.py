@@ -1,0 +1,119 @@
+"""데이터 — 풀린 묶음 (환경 변수 TD_DATA) 에서 16 비트 열화상과 깊이 정답 (÷256 = m) 을 읽는다.
+
+세트 이름
+  train · val · test_day · test_night · test_rainy   MS2 (분할 목록 = splits/ms2/<이름>_list.txt, 시퀀스 순서 → 프레임 이름순 = 공식 로더 순서)
+  fire                                                FIReStereo 저자 test 폴더 전부 (학습에 쓰지 않는 zero-shot 대상)
+묶음에는 이미 솎은 프레임만 들어 있다 (README '데이터') — 여기서는 있는 것을 전부 쓴다.
+
+열화상 → 입력 (tone): 사진마다 1–99 백분위로 자르고 [0, 1] 로 (MS2 공식 벤치마크의 TensorIWMM 과 같은 처리) → 3 채널로 복사 → ImageNet 평균 · 표준편차.
+학습 증강
+  base  좌우 뒤집기 (p 0.5) 만 — 공식 Depth Anything V2 metric 학습과 같다.
+  tone  뒤집기 + 무작위 톤매핑 (p 0.8): 자르는 백분위 U(0, 5) · U(95, 100), 감마 2^U(−1, 1), 절반은 히스토그램 평활화와 섞음 (비율 U(0, 1)).
+        평가 때는 base 와 똑같이 고정 처리 (1–99 백분위).
+증강의 난수는 (시드, epoch, 사진 번호) 로 정한다 → 이어 하기 · 작업자 수와 무관하게 같다.
+
+  python src/data.py check     # 세트마다 장 수를 setup/data.json 과 대조 + 첫 장 모양 확인
+"""
+import json
+import os
+import sys
+
+import numpy as np
+import torch
+from PIL import Image
+from torch.utils.data import Dataset
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MS2_SETS = ("train", "val", "test_day", "test_night", "test_rainy")
+SETS = MS2_SETS + ("fire",)
+MEAN = np.array([0.485, 0.456, 0.406], np.float32)[:, None, None]
+STD = np.array([0.229, 0.224, 0.225], np.float32)[:, None, None]
+TONE_P = 0.8
+
+
+def frames(name, root=None):
+    """[(키, 열화상 경로, 깊이 경로)] — 공식 순서. 묶음에 없는 시퀀스는 건너뛴다 (smoke 묶음)."""
+    root = root or os.environ["TD_DATA"]
+    out = []
+    if name == "fire":
+        base = os.path.join(root, "firestereo")
+        for d in sorted(x for x in (os.listdir(base) if os.path.isdir(base) else []) if x.endswith("_test")):
+            for n in sorted(x for x in os.listdir(os.path.join(base, d, "img_left")) if x.endswith(".png")):
+                out.append((f"{d}/{n}", os.path.join(base, d, "img_left", n), os.path.join(base, d, "depth_filtered", n)))
+        return out
+    with open(os.path.join(HERE, "..", "splits", "ms2", f"{name}_list.txt")) as f:
+        seqs = [s.strip() for s in f if s.strip()]
+    for s in seqs:
+        img = os.path.join(root, "sync_data", s, "thr", "img_left")
+        if not os.path.isdir(img):
+            continue
+        for n in sorted(x for x in os.listdir(img) if x.endswith(".png")):
+            out.append((f"{s}/{n}", os.path.join(img, n), os.path.join(root, "proj_depth", s, "thr", "depth_filtered", n)))
+    return out
+
+
+def tone(raw, rng=None):
+    """16 비트 열화상 (H, W) → [0, 1] float32. rng 를 주면 무작위 톤매핑 (tone 팔의 학습), 안 주면 고정 처리."""
+    x = raw.astype(np.float32)
+    aug = rng is not None and rng.random() < TONE_P
+    lo_p, hi_p = (rng.uniform(0, 5), rng.uniform(95, 100)) if aug else (1.0, 99.0)
+    lo, hi = (float(v) for v in np.percentile(x, [lo_p, hi_p]))     # 파이썬 float 로 — numpy 스칼라와 섞이면 float64 로 올라간다
+    x = np.clip((x - lo) / max(hi - lo, 1.0), 0.0, 1.0)
+    if aug:
+        x = x ** float(2.0 ** rng.uniform(-1, 1))
+        if rng.random() < 0.5:                                     # 히스토그램 평활화 (값의 순위) 와 섞기
+            flat = x.ravel()
+            he = (np.searchsorted(np.sort(flat), flat, side="right") / flat.size).reshape(x.shape).astype(np.float32)
+            a = float(rng.uniform(0, 1))
+            x = (1 - a) * x + a * he
+    return x.astype(np.float32, copy=False)
+
+
+def load_pair(img_path, depth_path):
+    raw = np.array(Image.open(img_path))
+    dep = np.array(Image.open(depth_path))
+    if raw.ndim != 2 or raw.dtype != np.uint16 or dep.shape != raw.shape:
+        raise ValueError(f"예상과 다른 사진: {os.path.basename(img_path)} {raw.shape} {raw.dtype} / 깊이 {dep.shape} {dep.dtype}")
+    return raw, dep.astype(np.float32) / 256.0
+
+
+class Thermal(Dataset):
+    def __init__(self, name, limit=0, aug=None, seed=0, root=None):
+        assert name in SETS and aug in (None, "base", "tone")
+        self.name, self.aug, self.seed, self.epoch = name, aug, seed, 0
+        self.items = frames(name, root)
+        if limit and limit < len(self.items):                       # smoke: 같은 간격으로 limit 장
+            self.items = [self.items[round(i * (len(self.items) - 1) / max(limit - 1, 1))] for i in range(limit)]
+        self.fx_key = "fire" if name == "fire" else "ms2"
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, i):
+        key, ip, dp = self.items[i]
+        raw, dep = load_pair(ip, dp)
+        rng = np.random.default_rng([self.seed, self.epoch, i]) if self.aug else None
+        x = tone(raw, rng if self.aug == "tone" else None)
+        if rng is not None and rng.random() < 0.5:
+            x, dep = x[:, ::-1], dep[:, ::-1]
+        x = (np.repeat(np.ascontiguousarray(x)[None], 3, 0) - MEAN) / STD
+        return torch.from_numpy(x), torch.from_numpy(np.ascontiguousarray(dep)), i
+
+
+def check():
+    spec = json.load(open(os.path.join(HERE, "..", "setup", "data.json"), encoding="utf-8"))
+    kind = open(os.path.join(os.environ["TD_DATA"], ".done")).read().split()[0]      # all | smoke (setup/get_data.py 가 남김)
+    want, bad, parts = spec["counts"][kind], 0, []
+    for name in SETS:
+        ds = Thermal(name)
+        ok = len(ds) == want[name]
+        bad += not ok
+        x, d, _ = ds[0]
+        v = (d > 0).float().mean().item()
+        parts.append(f"{name} {len(ds):,}" + ("" if ok else f" (!!! 기대 {want[name]:,})") + f" [{x.shape[1]}×{x.shape[2]} · 정답 {v * 100:.0f} %]")
+    print(f"[data] 세트 확인 ({kind}): " + " · ".join(parts))
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(check() if sys.argv[1:] == ["check"] else 2)

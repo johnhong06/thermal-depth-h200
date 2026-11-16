@@ -1,0 +1,129 @@
+"""결과 표와 판정 — runs/<팔>_s<시드>/eval/metrics.json 을 모아 화면 (이슈 댓글) 에서 바로 읽을 수 있는 표를 찍고 summary/ 에 남긴다.
+
+  python src/report.py summary --runs <runs 폴더> --out <summary 폴더>
+화면에는 이름과 숫자만 찍는다 (공개). 줄 수를 40 줄 안으로 — run.sh 가 화면의 끝 50 줄을 남기므로 마지막 표는 늘 보인다.
+수치 = 시드 평균 ± 표준편차 (시드 2 개 이상, n − 1 로 나눔). 판정 기준은 README '판정 기준' 과 같다 (결과를 보기 전에 고정한 것).
+"""
+import argparse
+import json
+import os
+import re
+import sys
+
+MS2 = ("test_day", "test_night", "test_rainy")
+GATE_ABSREL = 0.085       # 기준선 재현: MS2 세 조건 평균 raw AbsRel 이 이 값 이하
+GAP_ABSREL = 0.05         # zero-shot 격차: FIReStereo raw AbsRel − MS2 평균 raw AbsRel 이 이 값 이상
+
+
+def load(runs):
+    out = {}
+    for d in sorted(os.listdir(runs) if os.path.isdir(runs) else []):
+        m = re.fullmatch(r"([a-z]+)_s(\d+)", d)
+        p = os.path.join(runs, d, "eval", "metrics.json")
+        if m and os.path.exists(p):
+            r = json.load(open(p, encoding="utf-8"))
+            done = os.path.join(runs, d, "done.json")
+            r["_min"] = json.load(open(done)).get("minutes") if os.path.exists(done) else None
+            out.setdefault(m.group(1), {})[int(m.group(2))] = r
+    return out
+
+
+def stat(xs):
+    n = len(xs)
+    mu = sum(xs) / n
+    sd = (sum((x - mu) ** 2 for x in xs) / (n - 1)) ** 0.5 if n > 1 else None
+    return mu, sd, (max(xs) - min(xs))
+
+
+def get(r, sets, var, key):
+    """세트 여러 개면 세트 평균 (MS2 세 조건 평균 — 공식 벤치마크 README 의 방식). 'fire/day' 꼴은 FIReStereo 의 낮 · 밤비."""
+    vals = []
+    for s in sets:
+        node = r.get(s.split("/")[0])
+        if node is not None and "/" in s:
+            node = node.get(s.split("/")[1])
+        if node is None:
+            return None
+        vals.append(node[var][key])
+    return sum(vals) / len(vals)
+
+
+def cell(seeds, sets, var, keys=("abs_rel", "rmse", "d1")):
+    parts = []
+    for k in keys:
+        xs = [v for v in (get(r, sets, var, k) for r in seeds.values()) if v is not None]
+        if not xs:
+            return "—"
+        mu, sd, _ = stat(xs)
+        prec = 3 if k == "rmse" else 4
+        parts.append(f"{mu:.{prec}f}" + (f"±{sd:.{prec}f}" if sd is not None else ""))
+    return " / ".join(parts)
+
+
+def summary(runs, out):
+    R = load(runs)
+    if not R:
+        print("[표] 아직 끝난 평가가 없음")
+        return 0
+    os.makedirs(out, exist_ok=True)
+    L = []
+    arms = [a for a in ("base", "tone") if a in R] + sorted(a for a in R if a not in ("base", "tone"))
+    L.append("[표1] MS2 test (학습과 같은 데이터) · raw — AbsRel / RMSE / δ1, 시드 평균±표준편차")
+    for a in arms:
+        L.append(f"[표1] {a:5s} 시드 {len(R[a])} | 낮 {cell(R[a], ['test_day'], 'raw')} | 밤 {cell(R[a], ['test_night'], 'raw')} | "
+                 f"비 {cell(R[a], ['test_rainy'], 'raw')} | 평균 {cell(R[a], MS2, 'raw')}")
+    L.append("[표2] MS2 test 평균 · median (중앙값 맞춤 — 공식 벤치마크 방식) — AbsRel / RMSE / δ1")
+    for a in arms:
+        L.append(f"[표2] {a:5s} | {cell(R[a], MS2, 'median')}")
+    L.append("[표3] FIReStereo test (zero-shot, 학습에 안 씀) — AbsRel / RMSE / δ1")
+    for a in arms:
+        L.append(f"[표3] {a:5s} | raw {cell(R[a], ['fire'], 'raw')} | focal {cell(R[a], ['fire'], 'focal')} | median {cell(R[a], ['fire'], 'median')}")
+        L.append(f"[표3] {a:5s} | raw 낮 {cell(R[a], ['fire/day'], 'raw')} | raw 밤비 {cell(R[a], ['fire/night'], 'raw')}")
+    L.append("[표4] 시드별 raw AbsRel — MS2 낮 · 밤 · 비 · 평균 | FIReStereo raw · median | 학습 시간 (분)")
+    for a in arms:
+        for s, r in sorted(R[a].items()):
+            f = lambda sets, var="raw": "—" if get(r, sets, var, "abs_rel") is None else f"{get(r, sets, var, 'abs_rel'):.4f}"  # noqa: E731
+            L.append(f"[표4] {a}_s{s} | {f(['test_day'])} · {f(['test_night'])} · {f(['test_rainy'])} · {f(MS2)} | {f(['fire'])} · {f(['fire'], 'median')} | {r['_min']}")
+
+    J = {}
+    if "base" in R:
+        ms2 = [v for v in (get(r, MS2, "raw", "abs_rel") for r in R["base"].values()) if v is not None]
+        fire = [v for v in (get(r, ["fire"], "raw", "abs_rel") for r in R["base"].values()) if v is not None]
+        if ms2:
+            mu = stat(ms2)[0]
+            J["gate"] = {"ms2_abs_rel": mu, "ok": mu <= GATE_ABSREL}
+            L.append(f"[판정] 기준선 재현: base MS2 평균 raw AbsRel {mu:.4f} (기준 ≤ {GATE_ABSREL}) → " + ("재현됨" if mu <= GATE_ABSREL else "재현 안 됨 — 학습 설정을 먼저 본다"))
+        if ms2 and fire:
+            gap = stat(fire)[0] - stat(ms2)[0]
+            J["gap"] = {"gap": gap, "ok": gap >= GAP_ABSREL}
+            L.append(f"[판정] zero-shot 격차: FIReStereo {stat(fire)[0]:.4f} − MS2 {stat(ms2)[0]:.4f} = {gap:+.4f} (기준 ≥ {GAP_ABSREL}) → "
+                     + ("격차 있음 (주제의 전제 성립)" if gap >= GAP_ABSREL else "격차 작음 — 주제를 다시 본다"))
+        for a in [x for x in arms if x != "base"]:
+            f2 = [v for v in (get(r, ["fire"], "raw", "abs_rel") for r in R[a].values()) if v is not None]
+            m2 = [v for v in (get(r, MS2, "raw", "abs_rel") for r in R[a].values()) if v is not None]
+            if not (fire and f2 and ms2 and m2):
+                continue
+            d_fire, d_ms2 = stat(f2)[0] - stat(fire)[0], stat(m2)[0] - stat(ms2)[0]
+            if min(len(fire), len(f2)) < 2:
+                verdict = "시드가 하나라 판정하지 않음"
+            else:
+                nf, nm = stat(fire)[2], stat(ms2)[2]                # 잡음 폭 = base 의 시드 범위 (최대 − 최소)
+                verdict = ("개선" if d_fire < -nf and d_ms2 <= nm else "MS2 에서 나빠짐" if d_fire < -nf else "나빠짐" if d_fire > nf else "차이 없음 (잡음 안)")
+                verdict += f" · 잡음 폭 FIReStereo {nf:.4f} · MS2 {nm:.4f}"
+            J[a] = {"d_fire": d_fire, "d_ms2": d_ms2, "verdict": verdict}
+            L.append(f"[판정] {a} − base: FIReStereo raw AbsRel {d_fire:+.4f} · MS2 평균 {d_ms2:+.4f} → {verdict}")
+    print("\n".join(L), flush=True)
+    with open(os.path.join(out, "summary.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(L) + "\n")
+    with open(os.path.join(out, "summary.json"), "w", encoding="utf-8") as f:
+        json.dump({"runs": R, "judge": J}, f, ensure_ascii=False, indent=1)
+    return 0
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("what", choices=["summary"])
+    ap.add_argument("--runs", required=True)
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args()
+    sys.exit(summary(a.runs, a.out))
