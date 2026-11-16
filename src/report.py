@@ -56,11 +56,12 @@ def cell(seeds, sets, var, keys=("abs_rel", "rmse", "d1")):
     for k in keys:
         xs = [v for v in (get(r, sets, var, k) for r in seeds.values()) if v is not None]
         if not xs:
-            return "—"
+            parts.append("—")
+            continue
         mu, sd, _ = stat(xs)
         prec = 3 if k == "rmse" else 4
         parts.append(f"{mu:.{prec}f}" + (f"±{sd:.{prec}f}" if sd is not None else ""))
-    return " / ".join(parts)
+    return "—" if all(p == "—" for p in parts) else " / ".join(parts)
 
 
 def summary(runs, out):
