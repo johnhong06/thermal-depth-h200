@@ -48,3 +48,31 @@ def count_params(model):
     enc = sum(p.numel() for n, p in model.named_parameters() if "pretrained" in n)
     head = sum(p.numel() for n, p in model.named_parameters() if "pretrained" not in n)
     return {"encoder_m": round(enc / 1e6, 2), "head_m": round(head / 1e6, 2)}
+
+
+def build_teacher(encoder="vitl", weights=""):
+    """선생 = 공식 Depth Anything V2 상대 깊이 모델 (고정). 상대 깊이판 dpt.py 와 metric 판의 차이는 마지막 활성 (ReLU 대 Sigmoid) 과 max_depth 곱뿐이라
+    (2026-11-16 두 파일을 대조), metric 판 클래스에 상대 깊이 체크포인트를 전부 싣고 마지막 Sigmoid 를 ReLU 로 바꾸면 같은 모델이 된다. 출력 = 역깊이 꼴의 상대 깊이.
+    weights 를 비우면 무작위 초기화 (시험용)."""
+    code = os.path.join(os.environ["TD_CODE"], "metric_depth")
+    if code not in sys.path:
+        sys.path.insert(0, code)
+    from depth_anything_v2.dpt import DepthAnythingV2
+    m = DepthAnythingV2(**CFG[encoder], max_depth=1.0)
+    if weights:
+        m.load_state_dict(torch.load(weights, map_location="cpu", weights_only=True), strict=True)
+    last = m.depth_head.scratch.output_conv2
+    if not isinstance(last[-1], torch.nn.Sigmoid):
+        raise SystemExit("!!! [model] 공식 코드의 헤드 구조가 예상과 다름 (마지막 층이 Sigmoid 가 아님)")
+    last[-1] = torch.nn.ReLU()
+    return m.eval().requires_grad_(False)
+
+
+@torch.no_grad()
+def teacher_disp(teacher, rgb, amp=False):
+    """정규화된 RGB (B, 3, H, W) → 상대 깊이 (B, H, W), float32. 입력 크기 규칙은 학생과 같다 (14 의 배수로 반올림)."""
+    x = F.interpolate(rgb, net_size(*rgb.shape[-2:]), mode="bilinear", align_corners=False)
+    with torch.autocast(x.device.type, dtype=torch.bfloat16, enabled=amp):
+        d = teacher(x)
+    return F.interpolate(d.float()[:, None], rgb.shape[-2:], mode="bilinear", align_corners=True)[:, 0]
+

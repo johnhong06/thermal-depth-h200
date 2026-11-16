@@ -21,6 +21,16 @@ MIN_VALID = 10            # 범위 안 정답 픽셀이 이보다 적은 사진�
 # 열화상 카메라 초점거리 (px, 가로 640 기준). ms2 = calib.npy 의 K_thrL (20 시퀀스 같음) · fire = 저자 firestereo.yaml cam0 · vivid = calib_ther_to_rgb.yaml 의 K_Thermal
 FX = {"ms2": 387.787, "fire": 406.332, "vivid": 437.389}
 FX_TRAIN = FX["ms2"]
+# ViViD 후처리본의 보정값 (calib_ther_to_rgb.yaml) — 영상은 왜곡을 편 것이라 K 만 쓴다. X_rgb = R · X_thermal + T (m).
+# 두 시점의 LiDAR 깊이 지도로 확인: 이 식으로 열화상 시점의 점을 RGB 로 옮기면 99.8 % 가 RGB 시점 깊이와 맞는다 (2026-11-16).
+VIVID_K_T = ((437.38861083256637, 0.0, 323.5284494924228), (0.0, 437.29475745770907, 256.36315482047905), (0.0, 0.0, 1.0))
+VIVID_K_RGB = ((531.0787710720505, 0.0, 322.0434384516226), (0.0, 530.9280349280389, 239.58555406488455), (0.0, 0.0, 1.0))
+VIVID_R = ((0.9999117397341355, 0.002936303473050537, 0.012957270691089122), (-0.002938371484737371, 0.999995673097488, 0.00014056782332314203),
+           (-0.012956801876454241, -0.00017862869148840368, 0.9999160411639161))
+VIVID_T = (0.02284737993266349, -0.04897547901167786, 0.033484737180487244)
+PL_TRIM = 0.2             # 의사 라벨 손실에서 사진마다 버리는 큰 오차의 비율 (MiDaS 의 trimmed 손실과 같은 값)
+PL_DARK = 0.08            # RGB 밝기 (0–1, 7×7 평균) 가 이보다 낮은 픽셀은 의사 라벨에서 뺀다 — 선생 (RGB 깊이 모델) 이 볼 수 없는 곳
+PL_Z0 = 15.0              # ViViD: RGB 시점의 선생 깊이를 열화상 시점으로 옮길 때 가정하는 거리 (m). 두 카메라가 6 cm 떨어져 있어 5 m 에서 약 4 픽셀, 10 m 밖은 1 픽셀 안의 어긋남
 METRICS = ("abs_rel", "sq_rel", "rmse", "rmse_log", "d1", "d2", "d3")
 VARIANTS = ("raw", "focal", "median")
 
@@ -105,3 +115,35 @@ def silog(pred, gt, mask, lambd=0.5):
     """공식 Depth Anything V2 metric_depth/util/loss.py 의 SiLogLoss 와 같은 식."""
     dl = torch.log(gt[mask]) - torch.log(pred[mask])
     return torch.sqrt(dl.pow(2).mean() - lambd * dl.mean().pow(2))
+
+
+def ssi_trim(pred, disp, mask, trim=PL_TRIM):
+    """의사 라벨 손실 — 축척 · 이동에 무관한 (scale-and-shift-invariant) 절대 오차, 큰 오차 일부를 버림 (MiDaS, Ranftl et al. 2020 의 방식을 따름).
+    pred = 학생의 깊이 (B, H, W) m · disp = 선생의 상대 깊이 (역깊이 꼴, 축척 · 이동 미정) · mask = 쓸 픽셀.
+    사진마다: 학생의 역깊이 1/pred 와 선생 값을 각각 (값 − 중앙값) / 평균 절대 편차 로 맞춘 뒤 |차| 를 구하고, 큰 쪽 trim 비율을 버린 평균. 쓸 픽셀이 100 개 미만인 사진은 건너뛴다."""
+    def norm(x):
+        x = x - x.median()
+        return x / x.abs().mean().clamp(min=1e-6)
+    total, n = pred.sum() * 0.0, 0
+    for b in range(pred.shape[0]):
+        m = mask[b]
+        if int(m.sum()) < 100:
+            continue
+        r = (norm(1.0 / pred[b][m].clamp(min=0.1)) - norm(disp[b][m].float())).abs()
+        total = total + r.topk(max(1, int(r.numel() * (1 - trim))), largest=False).values.mean()
+        n += 1
+    return total / max(n, 1)
+
+
+def vivid_grid(h=512, w=640, hr=480, wr=640, z0=PL_Z0):
+    """ViViD: 열화상 픽셀 (h × w) 마다 RGB 영상 (hr × wr) 에서 볼 자리 → (grid_sample 용 격자 (1, h, w, 2), RGB 화면 안인지 (h, w)).
+    열화상 픽셀의 시선에 거리 z0 의 점을 놓고 X_rgb = R · X + T 로 옮겨 RGB 에 투영한다."""
+    kt, kr = torch.tensor(VIVID_K_T, dtype=torch.float64), torch.tensor(VIVID_K_RGB, dtype=torch.float64)
+    rot, tr = torch.tensor(VIVID_R, dtype=torch.float64), torch.tensor(VIVID_T, dtype=torch.float64)
+    v, u = torch.meshgrid(torch.arange(h, dtype=torch.float64), torch.arange(w, dtype=torch.float64), indexing="ij")
+    x = torch.stack([(u - kt[0, 2]) / kt[0, 0] * z0, (v - kt[1, 2]) / kt[1, 1] * z0, torch.full_like(u, z0)], -1) @ rot.T + tr
+    ur, vr = kr[0, 0] * x[..., 0] / x[..., 2] + kr[0, 2], kr[1, 1] * x[..., 1] / x[..., 2] + kr[1, 2]
+    inside = (ur >= 0) & (ur <= wr - 1) & (vr >= 0) & (vr <= hr - 1)
+    grid = torch.stack([ur / (wr - 1) * 2 - 1, vr / (hr - 1) * 2 - 1], -1)[None].float()
+    return grid, inside
+

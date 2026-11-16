@@ -1,11 +1,11 @@
 {
- "_note": "실험용 묶음 (tar, 압축 없음). MS2 = 열화상 왼쪽 + 열화상 시점 깊이 (공식 로더의 솎기 규칙: train · val 3 장마다 1 장, test 10 장마다 1 장), FIReStereo = 저자 test 폴더의 왼쪽 열화상 + 깊이, ViViD = 야외 밤 · 낮 네 시퀀스의 열화상 + 열화상 시점 깊이 (선행 준비 스크립트의 속도 기준으로 고른 프레임). smoke = 위에서 몇 장씩. 2026-11-16 로컬에서 만들어 크기 · sha256 · 개수를 확인한 값. 묶음은 이 저장소에 없고 받는 주소도 적지 않는다 (다시 배포하면 안 되는 데이터) — 관리자가 /app/data 에 올려 둔 사본을 크기와 sha256 으로 찾아 쓴다. setup/get_data.py · setup/check.py · src/data.py 가 읽는다.",
+ "_note": "실험용 묶음 (tar, 압축 없음). MS2 = 열화상 왼쪽 + 열화상 시점 깊이 (공식 로더의 솎기 규칙: train · val 3 장마다 1 장, test 10 장마다 1 장), FIReStereo = 저자 test 폴더의 왼쪽 열화상 + 깊이, ViViD = 야외 밤 · 낮 네 시퀀스의 열화상 + 열화상 시점 깊이 (선행 준비 스크립트의 속도 기준으로 고른 프레임). 쌍 (pairs_*) = 깊이 정답 없는 RGB-열화상 쌍 (KAIST 보행자 10 장마다 1 장 · LLVIP 3 장마다 1 장을 640×512 로), vivid_day_rgb = ViViD 낮 프레임의 RGB. smoke = 위에서 몇 장씩. 'png' = 풀리는 사진 수 (PNG · JPEG). 2026-11-16 로컬에서 만들어 크기 · sha256 · 개수를 확인한 값. 묶음은 이 저장소에 없고 받는 주소도 적지 않는다 (다시 배포하면 안 되는 데이터) — 관리자가 /app/data 에 올려 둔 사본을 크기와 sha256 으로 찾아 쓴다. setup/get_data.py · setup/check.py · src/data.py 가 읽는다.",
  "files": {
   "smoke.tar": {
    "kind": "smoke",
-   "size": 33341440,
-   "sha256": "5733b0c9ebdca5ada6b07c6a60eb8495de1d461332c12c8401fd186b4f8a874f",
-   "png": 240
+   "size": 45608960,
+   "sha256": "d197e1fa52e080dbc6280bd15a81c16daa6f9694f4df3adc7265395676c6f168",
+   "png": 312
   },
   "train.tar": {
    "kind": "all",
@@ -48,6 +48,24 @@
    "size": 1300643840,
    "sha256": "a6097ad4f009ee8345e9655d290fb41971ecaefe10d9b51900d30fff2e1a76d7",
    "png": 8464
+  },
+  "pairs_kaist.tar": {
+   "kind": "all",
+   "size": 3877734400,
+   "sha256": "dd950c773e077ae235dceb1fbac2535e1c149f1c33335299579f6bfc96cf2bbe",
+   "png": 19092
+  },
+  "pairs_llvip.tar": {
+   "kind": "all",
+   "size": 766423040,
+   "sha256": "b95946d2732aa5d2dcecfb1b68e358235b598c368d82222bb7e640e7fa837062",
+   "png": 10326
+  },
+  "vivid_day_rgb.tar": {
+   "kind": "all",
+   "size": 929638400,
+   "sha256": "4397f6618559b6dc44ae4acd23cd11c0eace2584c68d983c09b1dddd3ee4ae4c",
+   "png": 2213
   }
  },
  "counts": {
@@ -59,7 +77,10 @@
    "test_rainy": 2503,
    "fire": 5021,
    "vivid": 2019,
-   "vivid_day": 2213
+   "vivid_day": 2213,
+   "pair_kaist": 9546,
+   "pair_llvip": 5163,
+   "pair_vivid_day": 2213
   },
   "smoke": {
    "train": 48,
@@ -69,7 +90,10 @@
    "test_rainy": 8,
    "fire": 16,
    "vivid": 8,
-   "vivid_day": 8
+   "vivid_day": 8,
+   "pair_kaist": 16,
+   "pair_llvip": 16,
+   "pair_vivid_day": 8
   }
  }
 }

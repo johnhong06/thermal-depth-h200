@@ -13,6 +13,11 @@
         평가 때는 base 와 똑같이 고정 처리 (1–99 백분위).
 증강의 난수는 (시드, epoch, 사진 번호) 로 정한다 → 이어 하기 · 작업자 수와 무관하게 같다.
 
+정답 없는 RGB-열화상 쌍 (Pairs — 의사 라벨 팔 pl · plv 의 학습에만 쓴다. 증강 없음)
+  kaist      KAIST 다중분광 보행자, 영상마다 10 장마다 1 장 (640×512, 화소 정렬, 8 비트 JPEG)
+  llvip      LLVIP, 3 장마다 1 장 (640×512 로 줄인 것, 화소 정렬, 8 비트 JPEG)
+  vivid_day  ViViD 야외 낮 — 열화상은 평가 묶음의 것 (640×512, 16 비트), RGB 는 다른 카메라 (640×480) 라 common.vivid_grid 로 옮겨 쓴다
+
   python src/data.py check     # 세트마다 장 수를 setup/data.json 과 대조 + 첫 장 모양 확인
 """
 import json
@@ -28,6 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MS2_SETS = ("train", "val", "test_day", "test_night", "test_rainy")
 VIVID = {"vivid": ("outdoor_robust_night1", "outdoor_robust_night2"), "vivid_day": ("outdoor_robust_day1", "outdoor_robust_day2")}
 SETS = MS2_SETS + ("fire",) + tuple(VIVID)
+PAIR_SETS = ("kaist", "llvip", "vivid_day")
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)[:, None, None]
 STD = np.array([0.229, 0.224, 0.225], np.float32)[:, None, None]
 TONE_P = 0.8
@@ -57,6 +63,29 @@ def frames(name, root=None):
             continue
         for n in sorted(x for x in os.listdir(img) if x.endswith(".png")):
             out.append((f"{s}/{n}", os.path.join(img, n), os.path.join(root, "proj_depth", s, "thr", "depth_filtered", n)))
+    return out
+
+
+def pair_frames(name, root=None):
+    """[(키, 열화상 경로, RGB 경로)] — 이름순."""
+    root = root or os.environ["TD_DATA"]
+    ls = lambda d: sorted(os.listdir(d)) if os.path.isdir(d) else []  # noqa: E731
+    out = []
+    if name == "kaist":
+        base = os.path.join(root, "pairs", "kaist")
+        for st in ls(base):
+            for v in ls(os.path.join(base, st)):
+                for n in ls(os.path.join(base, st, v, "lwir")):
+                    out.append((f"{st}/{v}/{n}", os.path.join(base, st, v, "lwir", n), os.path.join(base, st, v, "visible", n)))
+    elif name == "llvip":
+        base = os.path.join(root, "pairs", "llvip")
+        out = [(n, os.path.join(base, "infrared", n), os.path.join(base, "visible", n)) for n in ls(os.path.join(base, "infrared"))]
+    elif name == "vivid_day":
+        for s in VIVID["vivid_day"]:
+            base = os.path.join(root, "vivid", s)
+            out += [(f"{s}/{n}", os.path.join(base, "Thermal", n), os.path.join(base, "RGB", n)) for n in ls(os.path.join(base, "Thermal"))]
+    else:
+        raise ValueError(name)
     return out
 
 
@@ -109,6 +138,26 @@ class Thermal(Dataset):
         return torch.from_numpy(x), torch.from_numpy(np.ascontiguousarray(dep)), i
 
 
+class Pairs(Dataset):
+    """정답 없는 쌍 → (열화상 입력 (3, H, W), RGB 입력 (3, Hr, Wr)). 둘 다 ImageNet 정규화. 열화상은 평가 때와 같은 고정 톤 처리."""
+
+    def __init__(self, names, limit=0, root=None):
+        self.items = [x for n in names for x in pair_frames(n, root)]
+        if limit and limit < len(self.items):
+            self.items = [self.items[round(i * (len(self.items) - 1) / max(limit - 1, 1))] for i in range(limit)]
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, i):
+        _, tp, rp = self.items[i]
+        t = Image.open(tp)
+        t = np.array(t if t.mode in ("L", "I;16", "I") else t.convert("L"))      # KAIST 의 lwir 는 세 채널이 같은 JPEG
+        x = (np.repeat(tone(t)[None], 3, 0) - MEAN) / STD
+        rgb = (np.asarray(Image.open(rp).convert("RGB"), np.float32).transpose(2, 0, 1) / 255.0 - MEAN) / STD
+        return torch.from_numpy(x), torch.from_numpy(np.ascontiguousarray(rgb))
+
+
 def check():
     spec = json.load(open(os.path.join(HERE, "..", "setup", "data.json"), encoding="utf-8"))
     kind = open(os.path.join(os.environ["TD_DATA"], ".done")).read().split()[0]      # all | smoke (setup/get_data.py 가 남김)
@@ -120,6 +169,12 @@ def check():
         x, d, _ = ds[0]
         v = (d > 0).float().mean().item()
         parts.append(f"{name} {len(ds):,}" + ("" if ok else f" (!!! 기대 {want[name]:,})") + f" [{x.shape[1]}×{x.shape[2]} · 정답 {v * 100:.0f} %]")
+    for name in PAIR_SETS:
+        ds = Pairs([name])
+        ok = len(ds) == want["pair_" + name]
+        bad += not ok
+        x, rgb = ds[0]
+        parts.append(f"쌍 {name} {len(ds):,}" + ("" if ok else f" (!!! 기대 {want['pair_' + name]:,})") + f" [{x.shape[1]}×{x.shape[2]} / RGB {rgb.shape[1]}×{rgb.shape[2]}]")
     print(f"[data] 세트 확인 ({kind}): " + " · ".join(parts))
     return 1 if bad else 0
 

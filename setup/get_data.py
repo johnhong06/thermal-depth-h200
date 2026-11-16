@@ -25,7 +25,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SPEC = json.load(open(os.path.join(HERE, "data.json"), encoding="utf-8"))
 NAME = re.compile(r"^(?:(?:sync_data|proj_depth)/_[0-9-]+/thr/(?:img_left|depth_filtered)/[0-9A-Za-z_-]+\.png"
                   r"|firestereo/[a-z0-9_]+_test/(?:img_left|depth_filtered)/[0-9]+\.png"
-                  r"|vivid/outdoor_robust_(?:night|day)[12]/(?:Thermal|Depth_T)/[0-9]+\.png)$")
+                  r"|vivid/outdoor_robust_(?:night|day)[12]/(?:Thermal|Depth_T)/[0-9]+\.png"
+                  r"|vivid/outdoor_robust_day[12]/RGB/[0-9]+\.png"
+                  r"|pairs/kaist/set[0-9]{2}/V[0-9]{3}/(?:lwir|visible)/I[0-9]{5}\.jpg"
+                  r"|pairs/llvip/(?:infrared|visible)/[0-9]{6}\.jpg)$")
 
 
 ID = re.compile(r"^[A-Za-z0-9_-]{20,80}$")
@@ -108,7 +111,7 @@ def search(roots, size, depth=5):
 
 
 def unpack(tar, dest):
-    """이름이 정해진 꼴인 PNG 만 푼다 → 푼 개수."""
+    """이름이 정해진 꼴인 사진 (PNG · JPEG) 만 푼다 → 푼 개수."""
     n = 0
     with tarfile.open(tar, "r:") as t:
         for m in t:

@@ -1,7 +1,7 @@
 """결과 표와 판정 — runs/<팔>_s<시드>/eval/metrics.json 을 모아 화면 (이슈 댓글) 에서 바로 읽을 수 있는 표를 찍고 summary/ 에 남긴다.
 
   python src/report.py summary --runs <runs 폴더> --out <summary 폴더>
-화면에는 이름과 숫자만 찍는다 (공개). 줄 수를 40 줄 안으로 — run.sh 가 화면의 끝 50 줄을 남기므로 마지막 표는 늘 보인다.
+화면에는 이름과 숫자만 찍는다 (공개). 줄 수를 46 줄 안으로 (팔 넷 × 시드 셋일 때 44 줄) — run.sh 가 화면의 끝 50 줄을 남기므로 마지막 표는 늘 보인다.
 수치 = 시드 평균 ± 표준편차 (시드 2 개 이상, n − 1 로 나눔). 판정 기준은 README '판정 기준' 과 같다 (결과를 보기 전에 고정한 것).
 """
 import argparse
@@ -11,6 +11,7 @@ import re
 import sys
 
 MS2 = ("test_day", "test_night", "test_rainy")
+BASE_REF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "setup", "base_ref.json")   # 앞선 작업의 base 결과 (있을 때만)
 GATE_ABSREL = 0.085       # 기준선 재현: MS2 세 조건 평균 raw AbsRel 이 이 값 이하
 GAP_ABSREL = 0.05         # zero-shot 격차: 대상 (FIReStereo · ViViD 밤) 의 raw AbsRel − MS2 평균 raw AbsRel 이 이 값 이상
 ZS = (("FIReStereo", ["fire"]), ("ViViD 밤", ["vivid"]))     # zero-shot 대상 (이름, 세트)
@@ -43,9 +44,10 @@ def get(r, sets, var, key):
         node = r.get(s.split("/")[0])
         if node is not None and "/" in s:
             node = node.get(s.split("/")[1])
-        if node is None:
+        val = (node or {}).get(var, {}).get(key)                    # 앞선 작업의 기준 (base_ref.json) 에는 일부 값만 있다
+        if val is None:
             return None
-        vals.append(node[var][key])
+        vals.append(val)
     return sum(vals) / len(vals)
 
 
@@ -66,20 +68,26 @@ def summary(runs, out):
     if not R:
         print("[표] 아직 끝난 평가가 없음")
         return 0
+    ref = {}
+    if "base" not in R and os.path.exists(BASE_REF):               # 이 작업에서 base 를 안 돌렸으면 앞선 작업의 base 를 견줄 기준으로 쓴다
+        spec = json.load(open(BASE_REF, encoding="utf-8"))
+        R["base"] = {int(s): r for s, r in spec["seeds"].items()}
+        ref["base"] = f" ({spec['source']})"
     os.makedirs(out, exist_ok=True)
     L = []
-    arms = [a for a in ("base", "tone") if a in R] + sorted(a for a in R if a not in ("base", "tone"))
+    order = ("base", "tone", "pl", "plv")
+    arms = [a for a in order if a in R] + sorted(a for a in R if a not in order)
     L.append("[표1] MS2 test (학습과 같은 데이터) · raw — AbsRel / RMSE / δ1, 시드 평균±표준편차")
     for a in arms:
-        L.append(f"[표1] {a:5s} 시드 {len(R[a])} | 낮 {cell(R[a], ['test_day'], 'raw')} | 밤 {cell(R[a], ['test_night'], 'raw')} | "
+        L.append(f"[표1] {a:5s} 시드 {len(R[a])}{ref.get(a, str())} | 낮 {cell(R[a], ['test_day'], 'raw')} | 밤 {cell(R[a], ['test_night'], 'raw')} | "
                  f"비 {cell(R[a], ['test_rainy'], 'raw')} | 평균 {cell(R[a], MS2, 'raw')}")
     L.append("[표2] MS2 test 평균 · median (중앙값 맞춤 — 공식 벤치마크 방식) — AbsRel / RMSE / δ1")
     for a in arms:
         L.append(f"[표2] {a:5s} | {cell(R[a], MS2, 'median')}")
     L.append("[표3] FIReStereo test (zero-shot, 학습에 안 씀) — AbsRel / RMSE / δ1")
     for a in arms:
-        L.append(f"[표3] {a:5s} | raw {cell(R[a], ['fire'], 'raw')} | focal {cell(R[a], ['fire'], 'focal')} | median {cell(R[a], ['fire'], 'median')}")
-        L.append(f"[표3] {a:5s} | raw 낮 {cell(R[a], ['fire/day'], 'raw')} | raw 밤비 {cell(R[a], ['fire/night'], 'raw')}")
+        L.append(f"[표3] {a:5s} | raw {cell(R[a], ['fire'], 'raw')} | focal {cell(R[a], ['fire'], 'focal')} | median {cell(R[a], ['fire'], 'median')} | "
+                 f"raw 낮 {cell(R[a], ['fire/day'], 'raw')} | raw 밤비 {cell(R[a], ['fire/night'], 'raw')}")
     L.append("[표5] ViViD 야외 (zero-shot, 정답 테두리 뺌) — AbsRel / RMSE / δ1. 선행 표 (MonoTher-Depth, 밤 raw): DepthAnything 0.166 / 4.929 / 0.719 · 그 방법 0.153 / 4.440 / 0.768")
     for a in arms:
         L.append(f"[표5] {a:5s} | 밤 raw {cell(R[a], ['vivid'], 'raw')} | 밤 median {cell(R[a], ['vivid'], 'median')} | 낮 raw {cell(R[a], ['vivid_day'], 'raw')}")
@@ -88,7 +96,7 @@ def summary(runs, out):
         for s, r in sorted(R[a].items()):
             f = lambda sets, var="raw": "—" if get(r, sets, var, "abs_rel") is None else f"{get(r, sets, var, 'abs_rel'):.4f}"  # noqa: E731
             L.append(f"[표4] {a}_s{s} | {f(['test_day'])} · {f(['test_night'])} · {f(['test_rainy'])} · {f(MS2)} | {f(['fire'])} · {f(['fire'], 'median')} | "
-                     f"{f(['vivid'])} · {f(['vivid'], 'median')} · {f(['vivid_day'])} | {r['_min']}")
+                     f"{f(['vivid'])} · {f(['vivid'], 'median')} · {f(['vivid_day'])} | {r.get('_min')}")
 
     J = {}
     if "base" in R:

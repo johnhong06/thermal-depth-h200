@@ -40,6 +40,14 @@ def fake_tree(root, rng):
         put(os.path.join(root, "firestereo", d, "img_left"), os.path.join(root, "firestereo", d, "depth_filtered"), (2, 1), 512)
     for s in ("outdoor_robust_night1", "outdoor_robust_night2", "outdoor_robust_day1"):
         put(os.path.join(root, "vivid", s, "Thermal"), os.path.join(root, "vivid", s, "Depth_T"), (4, 2), 512)
+    rgb = lambda h, w: Image.fromarray(rng.integers(0, 255, (h, w, 3), dtype=np.uint8))  # noqa: E731
+    os.makedirs(os.path.join(root, "vivid", "outdoor_robust_day1", "RGB"))
+    for i in (4, 2):
+        rgb(480, 640).save(os.path.join(root, "vivid", "outdoor_robust_day1", "RGB", f"{i:06d}.png"))
+    for d, n in (("pairs/kaist/set00/V000/lwir", "I00010.jpg"), ("pairs/kaist/set00/V000/visible", "I00010.jpg"), ("pairs/kaist/set03/V001/lwir", "I00000.jpg"),
+                 ("pairs/kaist/set03/V001/visible", "I00000.jpg"), ("pairs/llvip/infrared", "010001.jpg"), ("pairs/llvip/visible", "010001.jpg")):
+        os.makedirs(os.path.join(root, d), exist_ok=True)
+        (rgb(512, 640).convert("L") if d.endswith("infrared") else rgb(512, 640)).save(os.path.join(root, d, n))
 
 
 class Parts(unittest.TestCase):
@@ -132,6 +140,63 @@ class Parts(unittest.TestCase):
         self.assertEqual([k for k, _, _ in v.items], [f"outdoor_robust_night{i}/{n:06d}.png" for i in (1, 2) for n in (2, 4)])
         self.assertEqual((v.fx_key, v.border, D.Thermal("fire").border, len(D.Thermal("vivid_day"))), ("vivid", True, False, 2))
 
+    def test_pairs(self):
+        ds = D.Pairs(["kaist", "llvip"])
+        self.assertEqual([k for k, _, _ in ds.items], ["set00/V000/I00010.jpg", "set03/V001/I00000.jpg", "010001.jpg"])
+        for i in range(3):
+            x, rgb = ds[i]
+            self.assertEqual((tuple(x.shape), tuple(rgb.shape), x.dtype, rgb.dtype), ((3, 512, 640), (3, 512, 640), torch.float32, torch.float32))
+        v = D.Pairs(["vivid_day"])
+        self.assertEqual(([k for k, _, _ in v.items], tuple(v[0][1].shape)), (["outdoor_robust_day1/000002.png", "outdoor_robust_day1/000004.png"], (3, 480, 640)))
+        self.assertEqual([k for k, _, _ in v.items], [k for k, _, _ in D.Thermal("vivid_day").items])          # 선생 점검이 같은 순서에 기댄다
+
+    def test_ssi_trim(self):
+        torch.manual_seed(1)
+        disp = torch.rand(2, 64, 80) + 0.05
+        mask = torch.ones(2, 64, 80, dtype=torch.bool)
+        pred = 1.0 / (3.0 * disp + 0.2)                            # 학생의 역깊이가 선생 값의 일차식이면 손실 0 (축척 · 이동 무관)
+        self.assertLess(C.ssi_trim(pred, disp, mask).item(), 1e-5)
+        self.assertLess(C.ssi_trim(pred, disp * 7 + 2, mask).item(), 1e-5)
+        bad = pred.clone()
+        bad[:, :6] = 50.0                                          # 사진의 9 % 가 엉뚱한 값 → 큰 오차 20 % 를 버리므로 손실은 작게 남고, 안 버리면 커진다
+        self.assertLess(C.ssi_trim(bad, disp, mask).item(), C.ssi_trim(bad, disp, mask, trim=0.0).item() * 0.5)
+        self.assertGreater(C.ssi_trim(1.0 / (torch.rand(2, 64, 80) + 0.05), disp, mask).item(), 0.3)   # 무관한 예측은 손실이 큼
+        self.assertEqual(C.ssi_trim(pred, disp, torch.zeros_like(mask)).item(), 0.0)                     # 쓸 픽셀이 없으면 0
+        p = pred.clone().requires_grad_(True)
+        C.ssi_trim(p * 1.3, disp.flip(-1), mask).backward()
+        self.assertTrue(torch.isfinite(p.grad).all() and p.grad.abs().sum() > 0)
+
+    def test_vivid_grid(self):
+        grid, inside = C.vivid_grid()
+        self.assertEqual((tuple(grid.shape), tuple(inside.shape)), ((1, 512, 640, 2), (512, 640)))
+        self.assertTrue(0.55 < inside.float().mean().item() < 0.80)                 # 열화상이 더 넓게 본다 → 가장자리는 RGB 밖
+        self.assertTrue(inside[256, 320] and not inside[5, 320] and not inside[256, 5])
+        u = (grid[0, 256, 320, 0].item() + 1) / 2 * 639                              # 열화상 가운데는 RGB 가운데 근처로 간다
+        v = (grid[0, 256, 320, 1].item() + 1) / 2 * 479
+        self.assertTrue(abs(u - 322) < 12 and abs(v - 240) < 12)
+        z0 = 15.0                                                                    # 직접 계산과 대조 (한 픽셀)
+        x = np.array([(100 - C.VIVID_K_T[0][2]) / C.VIVID_K_T[0][0] * z0, (300 - C.VIVID_K_T[1][2]) / C.VIVID_K_T[1][1] * z0, z0]) @ np.array(C.VIVID_R).T + np.array(C.VIVID_T)
+        ur, vr = C.VIVID_K_RGB[0][0] * x[0] / x[2] + C.VIVID_K_RGB[0][2], C.VIVID_K_RGB[1][1] * x[1] / x[2] + C.VIVID_K_RGB[1][2]
+        self.assertAlmostEqual((grid[0, 300, 100, 0].item() + 1) / 2 * 639, ur, places=2)
+        self.assertAlmostEqual((grid[0, 300, 100, 1].item() + 1) / 2 * 479, vr, places=2)
+
+    def test_teacher(self):
+        import train as T
+        t = self.M.build_teacher("vits")
+        self.assertTrue(isinstance(t.depth_head.scratch.output_conv2[-1], torch.nn.ReLU) and not any(p.requires_grad for p in t.parameters()))
+        rgb = torch.randn(1, 3, 480, 640)
+        d = self.M.teacher_disp(t, rgb)
+        self.assertTrue(tuple(d.shape) == (1, 480, 640) and float(d.min()) >= 0)
+        grid, inside = C.vivid_grid()
+        dw, ok = T.pseudo(t, rgb, False, grid, inside)
+        self.assertEqual((tuple(dw.shape), tuple(ok.shape), ok.dtype), ((1, 512, 640), (1, 512, 640), torch.bool))
+        self.assertFalse(ok[0][~inside].any())
+        dark = (torch.zeros(1, 3, 512, 640) - torch.from_numpy(D.MEAN)) / torch.from_numpy(D.STD)   # 검은 RGB → 쓸 픽셀 없음
+        self.assertEqual(int(T.bright(dark).sum()), 0)
+        self.assertEqual(int(T.bright(dark + 1.0).sum()), 512 * 640)
+        c = T.teacher_check(t, torch.device("cpu"), False)                           # 가짜 자료라 값은 뜻 없음 — 흐름과 장 수만
+        self.assertTrue(c is None or c["n"] <= 2)
+
     def test_border(self):
         gt = torch.zeros(512, 640)
         gt[::9, ::7] = 20.0                                        # LiDAR 처럼 드문 정답: 모든 줄 · 열에서 값 없는 비율 > 0.4 → 변마다 101 까지 들어간다
@@ -203,15 +268,48 @@ class Parts(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 R.summary(os.path.join(t, "runs"), os.path.join(t, "summary"))
             self.assertIn("시드가 하나", json.load(open(os.path.join(t, "summary", "summary.json")))["judge"]["tone"]["FIReStereo"]["verdict"])
+            # 이 작업에 base 가 없으면 앞선 작업의 base (setup/base_ref.json 꼴: 시드별 raw AbsRel 만) 를 기준으로 판정한다
+            import shutil
+            for s in range(3):
+                shutil.rmtree(os.path.join(t, "runs", f"base_s{s}"))
+                d = os.path.join(t, "runs", f"pl_s{s}", "eval")
+                os.makedirs(d)
+                m = {k: met(0.075) for k in ("test_day", "test_night", "test_rainy")} | {"fire": met(0.20 + 0.002 * s), "vivid": met(0.12)}
+                json.dump(m, open(os.path.join(d, "metrics.json"), "w"))
+            ref = {"source": "앞선 작업", "seeds": {str(s): {k: {"raw": {"abs_rel": v}} for k, v in
+                   (("test_day", 0.075), ("test_night", 0.075 + 0.001 * s), ("test_rainy", 0.075), ("fire", 0.30 + 0.005 * s), ("vivid", 0.16 + 0.004 * s))} for s in range(3)}}
+            old, R.BASE_REF = R.BASE_REF, os.path.join(t, "base_ref.json")
+            json.dump(ref, open(R.BASE_REF, "w"))
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                R.summary(os.path.join(t, "runs"), os.path.join(t, "summary"))
+            R.BASE_REF = old
+            j = json.load(open(os.path.join(t, "summary", "summary.json")))["judge"]
+            self.assertTrue(j["pl"]["FIReStereo"]["verdict"].startswith("개선") and j["pl"]["ViViD 밤"]["verdict"].startswith("개선"))
+            self.assertIn("(앞선 작업)", buf.getvalue())
+            self.assertLessEqual(len(buf.getvalue().splitlines()), 40)
+            for arm in ("base", "tone", "plv"):                    # 팔 넷 × 시드 셋 (한 작업에서 전부 돌릴 때) 도 끝 50 줄 안에 든다 (zip · 끝 줄 2 개 포함)
+                for s in range(3):
+                    d = os.path.join(t, "runs", f"{arm}_s{s}", "eval")
+                    os.makedirs(d, exist_ok=True)
+                    json.dump({k: met(0.075) for k in ("test_day", "test_night", "test_rainy")} | {"fire": met(0.3) | {"day": met(0.3), "night": met(0.3)}, "vivid": met(0.16), "vivid_day": met(0.15)},
+                              open(os.path.join(d, "metrics.json"), "w"))
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                R.summary(os.path.join(t, "runs"), os.path.join(t, "summary"))
+            self.assertLessEqual(len(buf.getvalue().splitlines()), 46)
+            self.assertTrue(all(len(x) < 400 for x in buf.getvalue().splitlines()))
 
     def test_unpack(self):
         import get_data as G
         with tempfile.TemporaryDirectory() as t:
             tar = os.path.join(t, "x.tar")
             good = ["sync_data/_2021-08-06-10-59-33/thr/img_left/000001.png", "proj_depth/_2021-08-06-10-59-33/thr/depth_filtered/000001.png",
-                    "firestereo/frick_2_test/img_left/02250.png", "vivid/outdoor_robust_night1/Thermal/000001.png", "vivid/outdoor_robust_day2/Depth_T/000001.png"]
+                    "firestereo/frick_2_test/img_left/02250.png", "vivid/outdoor_robust_night1/Thermal/000001.png", "vivid/outdoor_robust_day2/Depth_T/000001.png",
+                    "vivid/outdoor_robust_day1/RGB/000001.png", "pairs/kaist/set00/V000/lwir/I00010.jpg", "pairs/llvip/visible/010001.jpg"]
             bad = ["../evil.png", "sync_data/_2021-08-06-10-59-33/calib.npy", "sync_data/../../x/thr/img_left/1.png", "firestereo/frick_2_train/img_left/1.png",
-                   "sync_data/_2021-08-06-10-59-33/rgb/img_left/000001.png", "/abs/sync_data/_1/thr/img_left/1.png", "vivid/indoor_robust_dark/Thermal/000001.png"]
+                   "sync_data/_2021-08-06-10-59-33/rgb/img_left/000001.png", "/abs/sync_data/_1/thr/img_left/1.png", "vivid/indoor_robust_dark/Thermal/000001.png",
+                   "vivid/outdoor_robust_night1/RGB/000001.png", "pairs/kaist/set00/V000/lwir/../../x.jpg", "pairs/other/visible/010001.jpg"]
             with tarfile.open(tar, "w") as tf:
                 for n in good + bad:
                     ti = tarfile.TarInfo(n)
@@ -221,7 +319,7 @@ class Parts(unittest.TestCase):
                 ti.type, ti.linkname = tarfile.SYMTYPE, "/etc/passwd"
                 tf.addfile(ti)
             dest = os.path.join(t, "out")
-            self.assertEqual(G.unpack(tar, dest), 5)
+            self.assertEqual(G.unpack(tar, dest), 8)
             found = sorted(os.path.relpath(os.path.join(d, f), dest) for d, _, fs in os.walk(dest) for f in fs)
             self.assertEqual(found, sorted(good))
             self.assertEqual(os.listdir(t).count("evil.png"), 0)

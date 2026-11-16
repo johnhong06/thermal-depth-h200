@@ -5,8 +5,9 @@
 #   bash run.sh all [ARMS=…] [SEEDS=…]    # 준비 → 데이터 → (시드마다 팔마다) 학습 · 평가 → 표 → results.zip (실행 하나가 끝날 때마다 표와 묶음을 다시 만듦)
 #   bash run.sh setup [DRY_RUN=1] | data  # 한 단계만 (작업끼리 파일이 안 이어지므로 data 는 setup 도 먼저 한다)
 # KEY=값 (이슈 한 줄 명령에는 환경 변수를 못 넣으므로 인자로):
-#   ARMS=base,tone   all 에서 돌릴 팔 (쉼표). base = 기준선 · tone = 무작위 톤매핑 증강 (README '실험')
-#   SEEDS=0,1,2   EPOCHS=10   BS=16   AMP=1 (bf16 혼합 정밀도, 0 = 끔)   LIMIT=0 (학습 장 수 제한)   WORKERS=8 (사진을 읽는 작업자 수)
+#   ARMS=base,tone,pl,plv   돌릴 팔 (쉼표). base = 기준선 · tone = 무작위 톤매핑 증강 · pl = 다른 데이터의 쌍에 의사 라벨 (KAIST · LLVIP) ·
+#                           plv = 같은 방식을 ViViD 낮 쌍으로 (대상 데이터에 적응하는 기존 설정의 비교 팔). README '실험'. 안 주면 넷 다
+#   SEEDS=0,1,2   EPOCHS=10   BS=16   PAIR_BS=8 (pl · plv 의 쌍 배치)   AMP=1 (bf16 혼합 정밀도, 0 = 끔)   LIMIT=0 (학습 장 수 제한)   WORKERS=8 (사진을 읽는 작업자 수)
 #   CKPT=none|seed0|all (results.zip 에 넣을 final.pt — 하나에 1.3 GB 라 기본은 안 넣음)
 #   STALL_MIN=40 (로그가 이만큼 그대로면 멈춘 것으로 보고 끔)   PROGRESS_SEC=1800   RETRY=2 (학습이 죽으면 last.pt 에서 다시)
 #   LINKS=<Drive 파일 ID> 데이터 묶음을 받을 곳의 목록 파일. 묶음과 받는 주소는 저장소에 없다 (다시 배포하면 안 되는 데이터) — 이 값은 실행 명령에만 적는다.
@@ -25,7 +26,7 @@ MODE=${1:-}
 [ $# -gt 0 ] && shift
 MODES="check setup data smoke all"
 [[ " $MODES " == *" $MODE "* ]] && [ -n "$MODE" ] || { echo "!!! 모드: ${MODES// / | } (받은 값: '$MODE'). 사용법은 run.sh 맨 위"; exit 2; }
-KEYS="ARMS SEEDS EPOCHS BS AMP LIMIT WORKERS ENC LINKS CKPT STALL_MIN PROGRESS_SEC RETRY JOB DRY_RUN WORK PY APP_ROOT DATA_DIR HF_DIR"
+KEYS="ARMS SEEDS EPOCHS BS PAIR_BS AMP LIMIT WORKERS ENC LINKS CKPT STALL_MIN PROGRESS_SEC RETRY JOB DRY_RUN WORK PY APP_ROOT DATA_DIR HF_DIR"
 for k in $KEYS; do unset "$k"; done            # 컨테이너 환경 변수와 섞이지 않게 — 값은 KEY=값 인자로만
 for a in "$@"; do
   k=${a%%=*}
@@ -34,16 +35,16 @@ for a in "$@"; do
 done
 INT='^[0-9]+$'; NAME='^[A-Za-z0-9_.+-]+$'; LIST='^[a-z0-9,]*$'
 chk() { [ -z "${!1:-}" ] || [[ ${!1} =~ $2 ]] || { echo "!!! $1=${!1} — 형식이 맞지 않음"; exit 2; }; }
-chk ARMS "$LIST"; chk SEEDS "$LIST"; chk EPOCHS "$INT"; chk BS "$INT"; chk LIMIT "$INT"; chk WORKERS "$INT"; chk STALL_MIN "$INT"; chk PROGRESS_SEC "$INT"; chk RETRY "$INT"; chk JOB "$NAME"
+chk ARMS "$LIST"; chk SEEDS "$LIST"; chk EPOCHS "$INT"; chk BS "$INT"; chk PAIR_BS "$INT"; chk LIMIT "$INT"; chk WORKERS "$INT"; chk STALL_MIN "$INT"; chk PROGRESS_SEC "$INT"; chk RETRY "$INT"; chk JOB "$NAME"
 [ -z "${LINKS:-}" ] || [[ $LINKS =~ ^[A-Za-z0-9_-]{20,80}$ ]] || { echo "!!! LINKS — Drive 파일 ID 꼴이 아님"; exit 2; }
 case ${AMP:-1} in 0|1) ;; *) echo "!!! AMP = 0 | 1"; exit 2;; esac
 case ${ENC:-vitl} in vitl|vits) ;; *) echo "!!! ENC = vitl | vits"; exit 2;; esac
 case ${CKPT:-none} in none|seed0|all) ;; *) echo "!!! CKPT = none | seed0 | all"; exit 2;; esac
 case ${DRY_RUN:-0} in 0) ;; 1) [ "$MODE" = setup ] || { echo "!!! DRY_RUN=1 은 setup 모드에만"; exit 2; };; *) echo "!!! DRY_RUN = 0 | 1"; exit 2;; esac
-_a=${ARMS:-}; for x in ${_a//,/ }; do case $x in base|tone) ;; *) echo "!!! ARMS 의 '$x' — base | tone"; exit 2;; esac; done
+_a=${ARMS:-}; for x in ${_a//,/ }; do case $x in base|tone|pl|plv) ;; *) echo "!!! ARMS 의 '$x' — base | tone | pl | plv"; exit 2;; esac; done
 KIND=all
 if [ "$MODE" = smoke ]; then KIND=smoke; SEEDS=${SEEDS:-0}; EPOCHS=${EPOCHS:-1}; fi
-ARMS=${ARMS:-base,tone}; SEEDS=${SEEDS:-0,1,2}; EPOCHS=${EPOCHS:-10}; BS=${BS:-16}; AMP=${AMP:-1}; LIMIT=${LIMIT:-0}; WORKERS=${WORKERS:-8}; ENC=${ENC:-vitl}
+ARMS=${ARMS:-base,tone,pl,plv}; SEEDS=${SEEDS:-0,1,2}; EPOCHS=${EPOCHS:-10}; BS=${BS:-16}; PAIR_BS=${PAIR_BS:-8}; AMP=${AMP:-1}; LIMIT=${LIMIT:-0}; WORKERS=${WORKERS:-8}; ENC=${ENC:-vitl}
 CKPT=${CKPT:-none}; STALL_MIN=${STALL_MIN:-40}; PROGRESS_SEC=${PROGRESS_SEC:-1800}; RETRY=${RETRY:-2}; DRY_RUN=${DRY_RUN:-0}
 PY=${PY:-}; DATA_DIR=${DATA_DIR:-}; LINKS=${LINKS:-}
 [ -n "$SEEDS" ] || { echo "!!! SEEDS 가 비어 있음"; exit 2; }
@@ -95,7 +96,7 @@ for v in WORK HF_HOME UV_CACHE_DIR TD_CODE TD_DATA CK; do
 done
 echo "[run] $(date '+%F %T') 모드 $MODE · $([ $H200 = 1 ] && echo "H200 ($APP)" || echo 로컬) · 커밋 $(git rev-parse --short HEAD 2>/dev/null || echo '?')" \
      "· 작업 폴더 여유 $(df -h "$WORK" 2>/dev/null | awk 'NR==2 {print $4}') · 결과 $OUTJ"
-[ "$MODE" = check ] || echo "[run] ARMS=$ARMS · SEEDS=$SEEDS · EPOCHS=$EPOCHS · BS=$BS · AMP=$AMP · LIMIT=$LIMIT · WORKERS=$WORKERS · CKPT=$CKPT$([ "$ENC" = vitl ] || echo " · ENC=$ENC (무작위 초기화 — 흐름 시험)")"
+[ "$MODE" = check ] || echo "[run] ARMS=$ARMS · SEEDS=$SEEDS · EPOCHS=$EPOCHS · BS=$BS · PAIR_BS=$PAIR_BS · AMP=$AMP · LIMIT=$LIMIT · WORKERS=$WORKERS · CKPT=$CKPT$([ "$ENC" = vitl ] || echo " · ENC=$ENC (무작위 초기화 — 흐름 시험)")"
 
 # ───────────────────────── 단계 실행기: 멈춤 감지 ─────────────────────────
 brief_fail() {  # 실패한 로그에서 마지막 예외 한 줄과 위치 (파일:줄 (함수)) 만 — 코드 내용은 찍지 않는다 (공개 댓글)
@@ -241,7 +242,7 @@ train_eval() {  # 팔 시드 — 끝난 것은 건너뜀 (같은 작업 안)
   if [ ! -f "$rd/done.json" ]; then
     for ((a = 0; a <= RETRY; a++)); do
       WATCH="$rd/train_log.csv $rd/val_log.csv" run_step "학습 $name" "$LOGS/train_$name.log" show "$TPY" -I -B -u src/train.py --arm "$arm" --seed "$seed" \
-        --epochs "$EPOCHS" --bs "$BS" --amp "$AMP" --limit "$LIMIT" --workers "$WORKERS" --encoder "$ENC" --weights "$([ "$ENC" = vitl ] && echo "$TD_DAV2")" --out "$rd" --ckpt "$ck" --resume
+        --epochs "$EPOCHS" --bs "$BS" --pair_bs "$PAIR_BS" --amp "$AMP" --limit "$LIMIT" --workers "$WORKERS" --encoder "$ENC" --weights "$([ "$ENC" = vitl ] && echo "$TD_DAV2")" --out "$rd" --ckpt "$ck" --resume
       [ -f "$rd/done.json" ] && break
       [ "$STOP" = 1 ] && return 130
       [ -f "$rd/fail.json" ] && return 1                       # loss 발산은 다시 해도 같음

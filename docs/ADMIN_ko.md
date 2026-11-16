@@ -15,13 +15,13 @@ bash run.sh all LINKS=<값>       # 본 실험
 - 저장소, 이슈, 명령 어디에도 토큰이나 비밀번호가 없습니다. 필요한 것은 모두 로그인 없이 받습니다. `LINKS`는 데이터 묶음을 받을 곳의 목록을 가리키는 값이고 자격 증명이 아닙니다.
 - 패키지는 작업이 스스로 설치합니다(uv로 만든 가상환경, `/app/scratch/thermal` 아래).
 - 쓰는 경로는 `/app/scratch/thermal`(작업 폴더)과 `/app/output/<작업 이름>`(결과)뿐입니다. `/app/data`는 읽기만 합니다.
-- 필요한 공간은 작업 폴더 약 40 GB, 결과 1 GB 미만입니다.
+- 필요한 공간은 작업 폴더 약 60 GB, 결과 1 GB 미만입니다.
 
 ## 받는 것
 
 | 대상 | 받는 곳 | 크기 |
 |---|---|---|
-| 학습 · 평가 데이터 묶음 | Google Drive (링크 공유 파일) | 11.6 GiB |
+| 학습 · 평가 데이터 묶음 | Google Drive (링크 공유 파일) | 16.8 GiB |
 | Depth Anything V2 ViT-L 가중치 | Hugging Face | 1.3 GB |
 | Depth Anything V2 코드 | GitHub (고정 커밋) | 수 MB |
 | 파이썬 패키지 | PyPI · PyTorch 휠 색인 | 약 6 GB |
@@ -32,7 +32,7 @@ bash run.sh all LINKS=<값>       # 본 실험
 
 | 파일 | 크기 (바이트) | sha256 |
 |---|---|---|
-| `smoke.tar` | 33,341,440 | `5733b0c9ebdca5ada6b07c6a60eb8495de1d461332c12c8401fd186b4f8a874f` |
+| `smoke.tar` | 45,608,960 | `d197e1fa52e080dbc6280bd15a81c16daa6f9694f4df3adc7265395676c6f168` |
 | `train.tar` | 5,741,977,600 | `4f81d06e1b3ca4a6b48683db9e240b3648e98aa237a47819e9f44e92f5432ed9` |
 | `val.tar` | 1,110,333,440 | `2769b33f55092cdf69caef739a1564050411dd1e83988df5db11aa9c99b9b84a` |
 | `test_day.tar` | 543,303,680 | `13e53a6bd874485539d341348cd418aa0c2175ee48fb6797326f8292de04ac03` |
@@ -40,6 +40,9 @@ bash run.sh all LINKS=<값>       # 본 실험
 | `test_rainy.tar` | 518,563,840 | `615cb2c7624ffa966449fb0baa294af373afbdf8a65e119e3ee5585ed7d41c72` |
 | `firestereo_test.tar` | 2,717,808,640 | `69c571add7aaf2934263b67ea29b585c92b59b745e0bd71e512802dcf31b5855` |
 | `vivid.tar` | 1,300,643,840 | `a6097ad4f009ee8345e9655d290fb41971ecaefe10d9b51900d30fff2e1a76d7` |
+| `pairs_kaist.tar` | 3,877,734,400 | `dd950c773e077ae235dceb1fbac2535e1c149f1c33335299579f6bfc96cf2bbe` |
+| `pairs_llvip.tar` | 766,423,040 | `b95946d2732aa5d2dcecfb1b68e358235b598c368d82222bb7e640e7fa837062` |
+| `vivid_day_rgb.tar` | 929,638,400 | `4397f6618559b6dc44ae4acd23cd11c0eace2584c68d983c09b1dddd3ee4ae4c` |
 
 올린 뒤 확인:
 
