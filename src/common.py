@@ -6,6 +6,7 @@
     raw    모델 출력 그대로 — MonoTher-Depth 공개 코드 (zoedepth/utils/misc.py compute_metrics) 의 방식. 주 지표.
     median 사진마다 중앙값 맞춤 — MS2 공식 벤치마크 코드 (SupDepth4Thermal eval_metric.py, align=True) 의 방식. 벤치마크 표의 수치와 견줄 때.
     focal  학습 카메라와의 초점거리 비 (fx / FX_TRAIN) 를 곱함 — 카메라가 다른 데이터에서 raw 의 치우침이 초점거리 때문인지 보려고.
+  ViViD 만: 정답의 테두리를 뺀다 (border_box) — 선행 논문이 ViViD 를 그렇게 쟀고, 그 표와 견주려는 세트라서.
 """
 import json
 import os
@@ -17,7 +18,8 @@ import torch
 MIN_DEPTH = 1e-3          # m — 공식 Depth Anything V2 metric 학습 (train.py --min-depth) 과 같은 값
 MAX_DEPTH = 80.0          # m — 평가 상한이자 모델 출력 상한 (Sigmoid × MAX_DEPTH)
 MIN_VALID = 10            # 범위 안 정답 픽셀이 이보다 적은 사진은 건너뜀 (공식 train.py 의 평가와 같음)
-FX = {"ms2": 387.787, "fire": 406.332}    # 열화상 왼쪽 카메라 초점거리 (px, 가로 640 기준). ms2 = calib.npy 의 K_thrL (20 시퀀스 같음), fire = 저자 firestereo.yaml cam0
+# 열화상 카메라 초점거리 (px, 가로 640 기준). ms2 = calib.npy 의 K_thrL (20 시퀀스 같음) · fire = 저자 firestereo.yaml cam0 · vivid = calib_ther_to_rgb.yaml 의 K_Thermal
+FX = {"ms2": 387.787, "fire": 406.332, "vivid": 437.389}
 FX_TRAIN = FX["ms2"]
 METRICS = ("abs_rel", "sq_rel", "rmse", "rmse_log", "d1", "d2", "d3")
 VARIANTS = ("raw", "focal", "median")

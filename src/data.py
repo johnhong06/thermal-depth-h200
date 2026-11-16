@@ -3,6 +3,7 @@
 세트 이름
   train · val · test_day · test_night · test_rainy   MS2 (분할 목록 = splits/ms2/<이름>_list.txt, 시퀀스 순서 → 프레임 이름순 = 공식 로더 순서)
   fire                                                FIReStereo 저자 test 폴더 전부 (학습에 쓰지 않는 zero-shot 대상)
+  vivid · vivid_day                                   ViViD 야외 밤 (night1 · night2 = 선행 논문의 zero-shot 평가) · 낮 (day1 · day2, 참고). 학습에 쓰지 않는다
 묶음에는 이미 솎은 프레임만 들어 있다 (README '데이터') — 여기서는 있는 것을 전부 쓴다.
 
 열화상 → 입력 (tone): 사진마다 1–99 백분위로 자르고 [0, 1] 로 (MS2 공식 벤치마크의 TensorIWMM 과 같은 처리) → 3 채널로 복사 → ImageNet 평균 · 표준편차.
@@ -25,7 +26,8 @@ from torch.utils.data import Dataset
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MS2_SETS = ("train", "val", "test_day", "test_night", "test_rainy")
-SETS = MS2_SETS + ("fire",)
+VIVID = {"vivid": ("outdoor_robust_night1", "outdoor_robust_night2"), "vivid_day": ("outdoor_robust_day1", "outdoor_robust_day2")}
+SETS = MS2_SETS + ("fire",) + tuple(VIVID)
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)[:, None, None]
 STD = np.array([0.229, 0.224, 0.225], np.float32)[:, None, None]
 TONE_P = 0.8
@@ -40,6 +42,12 @@ def frames(name, root=None):
         for d in sorted(x for x in (os.listdir(base) if os.path.isdir(base) else []) if x.endswith("_test")):
             for n in sorted(x for x in os.listdir(os.path.join(base, d, "img_left")) if x.endswith(".png")):
                 out.append((f"{d}/{n}", os.path.join(base, d, "img_left", n), os.path.join(base, d, "depth_filtered", n)))
+        return out
+    if name in VIVID:
+        for s in VIVID[name]:
+            img = os.path.join(root, "vivid", s, "Thermal")
+            for n in sorted(x for x in (os.listdir(img) if os.path.isdir(img) else []) if x.endswith(".png")):
+                out.append((f"{s}/{n}", os.path.join(img, n), os.path.join(root, "vivid", s, "Depth_T", n)))
         return out
     with open(os.path.join(HERE, "..", "splits", "ms2", f"{name}_list.txt")) as f:
         seqs = [s.strip() for s in f if s.strip()]
@@ -84,7 +92,8 @@ class Thermal(Dataset):
         self.items = frames(name, root)
         if limit and limit < len(self.items):                       # smoke: 같은 간격으로 limit 장
             self.items = [self.items[round(i * (len(self.items) - 1) / max(limit - 1, 1))] for i in range(limit)]
-        self.fx_key = "fire" if name == "fire" else "ms2"
+        self.fx_key = "fire" if name == "fire" else "vivid" if name in VIVID else "ms2"
+        self.border = name in VIVID                                 # 평가 때 정답 테두리를 뺄지 (common.border_box)
 
     def __len__(self):
         return len(self.items)

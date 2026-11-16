@@ -12,7 +12,8 @@ import sys
 
 MS2 = ("test_day", "test_night", "test_rainy")
 GATE_ABSREL = 0.085       # 기준선 재현: MS2 세 조건 평균 raw AbsRel 이 이 값 이하
-GAP_ABSREL = 0.05         # zero-shot 격차: FIReStereo raw AbsRel − MS2 평균 raw AbsRel 이 이 값 이상
+GAP_ABSREL = 0.05         # zero-shot 격차: 대상 (FIReStereo · ViViD 밤) 의 raw AbsRel − MS2 평균 raw AbsRel 이 이 값 이상
+ZS = (("FIReStereo", ["fire"]), ("ViViD 밤", ["vivid"]))     # zero-shot 대상 (이름, 세트)
 
 
 def load(runs):
@@ -79,39 +80,47 @@ def summary(runs, out):
     for a in arms:
         L.append(f"[표3] {a:5s} | raw {cell(R[a], ['fire'], 'raw')} | focal {cell(R[a], ['fire'], 'focal')} | median {cell(R[a], ['fire'], 'median')}")
         L.append(f"[표3] {a:5s} | raw 낮 {cell(R[a], ['fire/day'], 'raw')} | raw 밤비 {cell(R[a], ['fire/night'], 'raw')}")
-    L.append("[표4] 시드별 raw AbsRel — MS2 낮 · 밤 · 비 · 평균 | FIReStereo raw · median | 학습 시간 (분)")
+    L.append("[표5] ViViD 야외 (zero-shot, 정답 테두리 뺌) — AbsRel / RMSE / δ1. 선행 표 (MonoTher-Depth, 밤 raw): DepthAnything 0.166 / 4.929 / 0.719 · 그 방법 0.153 / 4.440 / 0.768")
+    for a in arms:
+        L.append(f"[표5] {a:5s} | 밤 raw {cell(R[a], ['vivid'], 'raw')} | 밤 median {cell(R[a], ['vivid'], 'median')} | 낮 raw {cell(R[a], ['vivid_day'], 'raw')}")
+    L.append("[표4] 시드별 raw AbsRel — MS2 낮 · 밤 · 비 · 평균 | FIReStereo raw · median | ViViD 밤 raw · median · 낮 raw | 학습 시간 (분)")
     for a in arms:
         for s, r in sorted(R[a].items()):
             f = lambda sets, var="raw": "—" if get(r, sets, var, "abs_rel") is None else f"{get(r, sets, var, 'abs_rel'):.4f}"  # noqa: E731
-            L.append(f"[표4] {a}_s{s} | {f(['test_day'])} · {f(['test_night'])} · {f(['test_rainy'])} · {f(MS2)} | {f(['fire'])} · {f(['fire'], 'median')} | {r['_min']}")
+            L.append(f"[표4] {a}_s{s} | {f(['test_day'])} · {f(['test_night'])} · {f(['test_rainy'])} · {f(MS2)} | {f(['fire'])} · {f(['fire'], 'median')} | "
+                     f"{f(['vivid'])} · {f(['vivid'], 'median')} · {f(['vivid_day'])} | {r['_min']}")
 
     J = {}
     if "base" in R:
         ms2 = [v for v in (get(r, MS2, "raw", "abs_rel") for r in R["base"].values()) if v is not None]
-        fire = [v for v in (get(r, ["fire"], "raw", "abs_rel") for r in R["base"].values()) if v is not None]
+        zs = {n: [v for v in (get(r, sets, "raw", "abs_rel") for r in R["base"].values()) if v is not None] for n, sets in ZS}
         if ms2:
             mu = stat(ms2)[0]
             J["gate"] = {"ms2_abs_rel": mu, "ok": mu <= GATE_ABSREL}
             L.append(f"[판정] 기준선 재현: base MS2 평균 raw AbsRel {mu:.4f} (기준 ≤ {GATE_ABSREL}) → " + ("재현됨" if mu <= GATE_ABSREL else "재현 안 됨 — 학습 설정을 먼저 본다"))
-        if ms2 and fire:
-            gap = stat(fire)[0] - stat(ms2)[0]
-            J["gap"] = {"gap": gap, "ok": gap >= GAP_ABSREL}
-            L.append(f"[판정] zero-shot 격차: FIReStereo {stat(fire)[0]:.4f} − MS2 {stat(ms2)[0]:.4f} = {gap:+.4f} (기준 ≥ {GAP_ABSREL}) → "
-                     + ("격차 있음 (주제의 전제 성립)" if gap >= GAP_ABSREL else "격차 작음 — 주제를 다시 본다"))
+        J["gap"] = {}
+        for n, _ in ZS:
+            if ms2 and zs[n]:
+                gap = stat(zs[n])[0] - stat(ms2)[0]
+                J["gap"][n] = {"gap": gap, "ok": gap >= GAP_ABSREL}
+                L.append(f"[판정] zero-shot 격차 ({n}): {stat(zs[n])[0]:.4f} − MS2 {stat(ms2)[0]:.4f} = {gap:+.4f} (기준 ≥ {GAP_ABSREL}) → "
+                         + ("격차 있음" if gap >= GAP_ABSREL else "격차 작음"))
         for a in [x for x in arms if x != "base"]:
-            f2 = [v for v in (get(r, ["fire"], "raw", "abs_rel") for r in R[a].values()) if v is not None]
             m2 = [v for v in (get(r, MS2, "raw", "abs_rel") for r in R[a].values()) if v is not None]
-            if not (fire and f2 and ms2 and m2):
-                continue
-            d_fire, d_ms2 = stat(f2)[0] - stat(fire)[0], stat(m2)[0] - stat(ms2)[0]
-            if min(len(fire), len(f2)) < 2:
-                verdict = "시드가 하나라 판정하지 않음"
-            else:
-                nf, nm = stat(fire)[2], stat(ms2)[2]                # 잡음 폭 = base 의 시드 범위 (최대 − 최소)
-                verdict = ("개선" if d_fire < -nf and d_ms2 <= nm else "MS2 에서 나빠짐" if d_fire < -nf else "나빠짐" if d_fire > nf else "차이 없음 (잡음 안)")
-                verdict += f" · 잡음 폭 FIReStereo {nf:.4f} · MS2 {nm:.4f}"
-            J[a] = {"d_fire": d_fire, "d_ms2": d_ms2, "verdict": verdict}
-            L.append(f"[판정] {a} − base: FIReStereo raw AbsRel {d_fire:+.4f} · MS2 평균 {d_ms2:+.4f} → {verdict}")
+            J[a] = {}
+            for n, sets in ZS:
+                z2 = [v for v in (get(r, sets, "raw", "abs_rel") for r in R[a].values()) if v is not None]
+                if not (zs[n] and z2 and ms2 and m2):
+                    continue
+                d_zs, d_ms2 = stat(z2)[0] - stat(zs[n])[0], stat(m2)[0] - stat(ms2)[0]
+                if min(len(zs[n]), len(z2)) < 2:
+                    verdict = "시드가 하나라 판정하지 않음"
+                else:
+                    nz, nm = stat(zs[n])[2], stat(ms2)[2]            # 잡음 폭 = base 의 시드 범위 (최대 − 최소)
+                    verdict = ("개선" if d_zs < -nz and d_ms2 <= nm else "MS2 에서 나빠짐" if d_zs < -nz else "나빠짐" if d_zs > nz else "차이 없음 (잡음 안)")
+                    verdict += f" · 잡음 폭 {nz:.4f} · MS2 {nm:.4f}"
+                J[a][n] = {"d_zs": d_zs, "d_ms2": d_ms2, "verdict": verdict}
+                L.append(f"[판정] {a} − base ({n}): raw AbsRel {d_zs:+.4f} · MS2 평균 {d_ms2:+.4f} → {verdict}")
     print("\n".join(L), flush=True)
     with open(os.path.join(out, "summary.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")

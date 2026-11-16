@@ -21,7 +21,7 @@ bash run.sh all LINKS=<값>       # 본 실험
 
 | 대상 | 받는 곳 | 크기 |
 |---|---|---|
-| 학습 · 평가 데이터 묶음 | Google Drive (링크 공유 파일) | 10.4 GiB |
+| 학습 · 평가 데이터 묶음 | Google Drive (링크 공유 파일) | 11.6 GiB |
 | Depth Anything V2 ViT-L 가중치 | Hugging Face | 1.3 GB |
 | Depth Anything V2 코드 | GitHub (고정 커밋) | 수 MB |
 | 파이썬 패키지 | PyPI · PyTorch 휠 색인 | 약 6 GB |
@@ -32,13 +32,14 @@ bash run.sh all LINKS=<값>       # 본 실험
 
 | 파일 | 크기 (바이트) | sha256 |
 |---|---|---|
-| `smoke.tar` | 28,487,680 | `387dafa5fecb31130949bf6b9bdfd78fe7ec4f4261eba73267b0711a913e42c3` |
+| `smoke.tar` | 33,341,440 | `5733b0c9ebdca5ada6b07c6a60eb8495de1d461332c12c8401fd186b4f8a874f` |
 | `train.tar` | 5,741,977,600 | `4f81d06e1b3ca4a6b48683db9e240b3648e98aa237a47819e9f44e92f5432ed9` |
 | `val.tar` | 1,110,333,440 | `2769b33f55092cdf69caef739a1564050411dd1e83988df5db11aa9c99b9b84a` |
 | `test_day.tar` | 543,303,680 | `13e53a6bd874485539d341348cd418aa0c2175ee48fb6797326f8292de04ac03` |
 | `test_night.tar` | 517,969,920 | `894687fbf10ba36323c7a64347c65538e4c8eef7bdf132d858334c0070aa23d4` |
 | `test_rainy.tar` | 518,563,840 | `615cb2c7624ffa966449fb0baa294af373afbdf8a65e119e3ee5585ed7d41c72` |
 | `firestereo_test.tar` | 2,717,808,640 | `69c571add7aaf2934263b67ea29b585c92b59b745e0bd71e512802dcf31b5855` |
+| `vivid.tar` | 1,300,643,840 | `a6097ad4f009ee8345e9655d290fb41971ecaefe10d9b51900d30fff2e1a76d7` |
 
 올린 뒤 확인:
 

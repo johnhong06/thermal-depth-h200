@@ -38,6 +38,8 @@ def fake_tree(root, rng):
             put(os.path.join(root, "sync_data", s, "thr", "img_left"), os.path.join(root, "proj_depth", s, "thr", "depth_filtered"), (7, 3, 5), 256)
     for d in ("hawkins_9_test", "frick_9_test"):
         put(os.path.join(root, "firestereo", d, "img_left"), os.path.join(root, "firestereo", d, "depth_filtered"), (2, 1), 512)
+    for s in ("outdoor_robust_night1", "outdoor_robust_night2", "outdoor_robust_day1"):
+        put(os.path.join(root, "vivid", s, "Thermal"), os.path.join(root, "vivid", s, "Depth_T"), (4, 2), 512)
 
 
 class Parts(unittest.TestCase):
@@ -126,6 +128,22 @@ class Parts(unittest.TestCase):
         self.assertTrue(0 < flips < 6)
         self.assertEqual(len(D.Thermal("train", limit=4)), 4)
         self.assertEqual(tuple(D.Thermal("fire")[0][0].shape), (3, 512, 640))
+        v = D.Thermal("vivid")
+        self.assertEqual([k for k, _, _ in v.items], [f"outdoor_robust_night{i}/{n:06d}.png" for i in (1, 2) for n in (2, 4)])
+        self.assertEqual((v.fx_key, v.border, D.Thermal("fire").border, len(D.Thermal("vivid_day"))), ("vivid", True, False, 2))
+
+    def test_border(self):
+        gt = torch.zeros(512, 640)
+        gt[::9, ::7] = 20.0                                        # LiDAR 처럼 드문 정답: 모든 줄 · 열에서 값 없는 비율 > 0.4 → 변마다 101 까지 들어간다
+        self.assertEqual(C.border_box(gt), (101, 512 - 101, 101, 640 - 101))
+        m = C.eval_mask(gt, border=True)
+        self.assertEqual(int(m.sum()), int((gt[101:411, 101:539] > 0).sum()))
+        self.assertGreater(int(C.eval_mask(gt).sum()), int(m.sum()))
+        dense = torch.full((512, 640), 10.0)                       # 빽빽한 정답: 최소 테두리 40 만 뺀다
+        self.assertEqual(C.border_box(dense), (40, 472, 40, 600))
+        half = dense.clone()
+        half[:70] = 0                                              # 위 70 줄이 비어 있으면 거기까지 들어간다
+        self.assertEqual(C.border_box(half)[0], 70)
 
     def test_model(self):
         M = self.M
@@ -151,6 +169,8 @@ class Parts(unittest.TestCase):
             self.assertEqual(np.array(Image.open(os.path.join(out, "samples", pngs[0]))).shape, (512, 640))
         s, _ = eval_set(self.model, "test_night", torch.device("cpu"), bs=3, workers=0)
         self.assertEqual(s["n"], 3)
+        s, _ = eval_set(self.model, "vivid", torch.device("cpu"), bs=2, workers=0)
+        self.assertEqual((s["n"], s["n_all"]), (4, 4))
 
     def test_report(self):
         import contextlib
@@ -164,6 +184,7 @@ class Parts(unittest.TestCase):
                     d = os.path.join(t, "runs", f"{arm}_s{s}", "eval")
                     os.makedirs(d)
                     m = {k: met(0.075 + 0.001 * s) for k in ("test_day", "test_night", "test_rainy")} | {"fire": met(f) | {"day": met(f), "night": met(f)}}
+                    m |= {"vivid": met(0.160 + 0.004 * s), "vivid_day": met(0.150)}
                     json.dump(m, open(os.path.join(d, "metrics.json"), "w"))
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -172,23 +193,25 @@ class Parts(unittest.TestCase):
             self.assertLessEqual(len(out), 40)                     # run.sh 가 남기는 끝 50 줄 안에 들어가야 한다
             self.assertTrue(all(len(x) < 400 for x in out))
             j = json.load(open(os.path.join(t, "summary", "summary.json")))["judge"]
-            self.assertTrue(j["gate"]["ok"] and j["gap"]["ok"])
-            self.assertTrue(j["tone"]["verdict"].startswith("개선"))  # −0.049 < −잡음 폭 0.010, MS2 는 그대로
-            self.assertAlmostEqual(j["tone"]["d_fire"], -0.049333, places=5)
+            self.assertTrue(j["gate"]["ok"] and j["gap"]["FIReStereo"]["ok"] and j["gap"]["ViViD 밤"]["ok"])
+            self.assertTrue(j["tone"]["FIReStereo"]["verdict"].startswith("개선"))  # −0.049 < −잡음 폭 0.010, MS2 는 그대로
+            self.assertAlmostEqual(j["tone"]["FIReStereo"]["d_zs"], -0.049333, places=5)
+            self.assertTrue(j["tone"]["ViViD 밤"]["verdict"].startswith("차이 없음"))  # 같은 값 → 잡음 폭 0.008 안
+            self.assertTrue(any(x.startswith("[표5] base") for x in out))
             os.remove(os.path.join(t, "runs", "tone_s1", "eval", "metrics.json"))
             os.remove(os.path.join(t, "runs", "tone_s2", "eval", "metrics.json"))
             with contextlib.redirect_stdout(io.StringIO()):
                 R.summary(os.path.join(t, "runs"), os.path.join(t, "summary"))
-            self.assertIn("시드가 하나", json.load(open(os.path.join(t, "summary", "summary.json")))["judge"]["tone"]["verdict"])
+            self.assertIn("시드가 하나", json.load(open(os.path.join(t, "summary", "summary.json")))["judge"]["tone"]["FIReStereo"]["verdict"])
 
     def test_unpack(self):
         import get_data as G
         with tempfile.TemporaryDirectory() as t:
             tar = os.path.join(t, "x.tar")
             good = ["sync_data/_2021-08-06-10-59-33/thr/img_left/000001.png", "proj_depth/_2021-08-06-10-59-33/thr/depth_filtered/000001.png",
-                    "firestereo/frick_2_test/img_left/02250.png"]
+                    "firestereo/frick_2_test/img_left/02250.png", "vivid/outdoor_robust_night1/Thermal/000001.png", "vivid/outdoor_robust_day2/Depth_T/000001.png"]
             bad = ["../evil.png", "sync_data/_2021-08-06-10-59-33/calib.npy", "sync_data/../../x/thr/img_left/1.png", "firestereo/frick_2_train/img_left/1.png",
-                   "sync_data/_2021-08-06-10-59-33/rgb/img_left/000001.png", "/abs/sync_data/_1/thr/img_left/1.png"]
+                   "sync_data/_2021-08-06-10-59-33/rgb/img_left/000001.png", "/abs/sync_data/_1/thr/img_left/1.png", "vivid/indoor_robust_dark/Thermal/000001.png"]
             with tarfile.open(tar, "w") as tf:
                 for n in good + bad:
                     ti = tarfile.TarInfo(n)
@@ -198,7 +221,7 @@ class Parts(unittest.TestCase):
                 ti.type, ti.linkname = tarfile.SYMTYPE, "/etc/passwd"
                 tf.addfile(ti)
             dest = os.path.join(t, "out")
-            self.assertEqual(G.unpack(tar, dest), 3)
+            self.assertEqual(G.unpack(tar, dest), 5)
             found = sorted(os.path.relpath(os.path.join(d, f), dest) for d, _, fs in os.walk(dest) for f in fs)
             self.assertEqual(found, sorted(good))
             self.assertEqual(os.listdir(t).count("evil.png"), 0)

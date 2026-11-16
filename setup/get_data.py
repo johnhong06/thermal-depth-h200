@@ -24,7 +24,8 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPEC = json.load(open(os.path.join(HERE, "data.json"), encoding="utf-8"))
 NAME = re.compile(r"^(?:(?:sync_data|proj_depth)/_[0-9-]+/thr/(?:img_left|depth_filtered)/[0-9A-Za-z_-]+\.png"
-                  r"|firestereo/[a-z0-9_]+_test/(?:img_left|depth_filtered)/[0-9]+\.png)$")
+                  r"|firestereo/[a-z0-9_]+_test/(?:img_left|depth_filtered)/[0-9]+\.png"
+                  r"|vivid/outdoor_robust_(?:night|day)[12]/(?:Thermal|Depth_T)/[0-9]+\.png)$")
 
 
 ID = re.compile(r"^[A-Za-z0-9_-]{20,80}$")

@@ -1,6 +1,6 @@
 """평가 — 세트마다 사진별 지표를 구해 평균한다 (규칙은 common.py 맨 위 · README '판정 기준').
 
-  python src/evaluate.py --ckpt <final.pt> --out <폴더> [--sets test_day,test_night,test_rainy,fire] [--limit N] [--samples 16]
+  python src/evaluate.py --ckpt <final.pt> --out <폴더> [--sets test_day,test_night,test_rainy,fire,vivid,vivid_day] [--limit N] [--samples 16]
 결과 (--out): metrics.json (세트 · 예측 종류 (raw · focal · median) 별 평균, fire 는 낮 (hawkins) · 밤비 (frick) 로도 나눔)
               per_image.csv (사진마다 raw · median 의 AbsRel · RMSE · δ1 과 중앙값 배율)
               samples/<세트>_<번호>.png (예측 깊이 × 256, 16 비트 — 그림용, 같은 간격으로 --samples 장)
@@ -21,7 +21,7 @@ import data as D  # noqa: E402
 import model as M  # noqa: E402
 from common import FX, METRICS, VARIANTS, eval_mask, variants, write_json  # noqa: E402
 
-TEST_SETS = ("test_day", "test_night", "test_rainy", "fire")
+TEST_SETS = ("test_day", "test_night", "test_rainy", "fire", "vivid", "vivid_day")
 
 
 def mean_of(rows):
@@ -41,7 +41,7 @@ def eval_set(model, name, dev, limit=0, bs=16, workers=4, amp=False, samples=0, 
         pred = M.predict(model, x.to(dev, non_blocking=True), gt.shape[-2:], amp)
         for j in range(len(idx)):
             i = int(idx[j])
-            v = variants(pred[j], gt[j], eval_mask(gt[j]), FX[ds.fx_key])
+            v = variants(pred[j], gt[j], eval_mask(gt[j], ds.border), FX[ds.fx_key])
             if v is not None:
                 rows.append({"i": i, "key": ds.items[i][0], **v})
             if i in keep and out:

@@ -1,11 +1,11 @@
 {
- "_note": "실험용 묶음 (tar, 압축 없음). MS2 = 열화상 왼쪽 + 열화상 시점 깊이 (공식 로더의 솎기 규칙: train · val 3 장마다 1 장, test 10 장마다 1 장), FIReStereo = 저자 test 폴더의 왼쪽 열화상 + 깊이. smoke = 위에서 몇 장씩. 2026-11-16 로컬에서 만들어 크기 · sha256 · 개수를 확인한 값. 묶음은 이 저장소에 없고 받는 주소도 적지 않는다 (다시 배포하면 안 되는 데이터) — 관리자가 /app/data 에 올려 둔 사본을 크기와 sha256 으로 찾아 쓴다. setup/get_data.py · setup/check.py · src/data.py 가 읽는다.",
+ "_note": "실험용 묶음 (tar, 압축 없음). MS2 = 열화상 왼쪽 + 열화상 시점 깊이 (공식 로더의 솎기 규칙: train · val 3 장마다 1 장, test 10 장마다 1 장), FIReStereo = 저자 test 폴더의 왼쪽 열화상 + 깊이, ViViD = 야외 밤 · 낮 네 시퀀스의 열화상 + 열화상 시점 깊이 (선행 준비 스크립트의 속도 기준으로 고른 프레임). smoke = 위에서 몇 장씩. 2026-11-16 로컬에서 만들어 크기 · sha256 · 개수를 확인한 값. 묶음은 이 저장소에 없고 받는 주소도 적지 않는다 (다시 배포하면 안 되는 데이터) — 관리자가 /app/data 에 올려 둔 사본을 크기와 sha256 으로 찾아 쓴다. setup/get_data.py · setup/check.py · src/data.py 가 읽는다.",
  "files": {
   "smoke.tar": {
    "kind": "smoke",
-   "size": 28487680,
-   "sha256": "387dafa5fecb31130949bf6b9bdfd78fe7ec4f4261eba73267b0711a913e42c3",
-   "png": 208
+   "size": 33341440,
+   "sha256": "5733b0c9ebdca5ada6b07c6a60eb8495de1d461332c12c8401fd186b4f8a874f",
+   "png": 240
   },
   "train.tar": {
    "kind": "all",
@@ -42,6 +42,12 @@
    "size": 2717808640,
    "sha256": "69c571add7aaf2934263b67ea29b585c92b59b745e0bd71e512802dcf31b5855",
    "png": 10042
+  },
+  "vivid.tar": {
+   "kind": "all",
+   "size": 1300643840,
+   "sha256": "a6097ad4f009ee8345e9655d290fb41971ecaefe10d9b51900d30fff2e1a76d7",
+   "png": 8464
   }
  },
  "counts": {
@@ -51,7 +57,9 @@
    "test_day": 2332,
    "test_night": 2292,
    "test_rainy": 2503,
-   "fire": 5021
+   "fire": 5021,
+   "vivid": 2019,
+   "vivid_day": 2213
   },
   "smoke": {
    "train": 48,
@@ -59,7 +67,9 @@
    "test_day": 8,
    "test_night": 8,
    "test_rainy": 8,
-   "fire": 16
+   "fire": 16,
+   "vivid": 8,
+   "vivid_day": 8
   }
  }
 }
